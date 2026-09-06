@@ -12,6 +12,42 @@ ability:import` / `ability:update` / `ability:check` (check runs inside
 `docs/abilities/<champ>/<slot>.json`, provenance in
 `assets/source-manifest.json`.
 
+**IT WAS AN IMPORTER BUG, NOT A WIKI LIMIT — I got this wrong twice before
+checking properly.** The wiki *does* publish per-phase icons
+(`Steel Tempest.png`, `Steel Tempest 2.png`, `Steel Tempest 3.png`); I concluded
+otherwise from the cached record's identical sha1s, then from a raw-cache grep,
+and the user was right both times. Read `docs/abilities/cache/normalized/<champ>/<slot>.json`
+and look at each form's `fields.icon*` before claiming the wiki lacks art.
+
+**The actual defect:** the importer took the *first usable* of
+`icon`..`icon4` per form, but **every form page carries the whole chain** — so
+all three of Yasuo's forms resolved to `Steel Tempest.png`. Fixed by matching
+the icon to the form **by name** (exact, then the shortest containing match).
+Positional indexing was tried first and is *worse*: it is off by one whenever an
+earlier slot is the literal `false` (Zed's Living Shadow), and it handed Blue
+Card an animation gif and Xin Zhao's passive a diagram. Ashe's chain is even
+reversed (`icon` is the "2" variant), which is why the containing match must
+take the **shortest** normalised name, not the first.
+
+**Do not also filter gifs.** Tried, and it swept up Thresh's Flay icons, which
+are animated here on purpose — `tests/build/runtimeBundle.test.ts` pins that the
+encoder leaves gifs alone, and removing the only five gifs in the pack failed
+it. Name matching already passes over `Twisted Fate Pick a Card.gif`, because
+the form is `Pick a Card` and the still is named for it exactly.
+
+**Result:** 24 abilities re-derived; byte-identical spell icons **68 -> 14**, and
+the 14 left are abilities the wiki genuinely draws once (Thresh Flay's five
+template sub-pages, Jinx's Pow-Pow forms, Blitzcrank, Garen, TF's Gold Card).
+
+**`--update` will not re-fetch on its own.** It skips when `source.revisionId`
+and `contentHash` match and no image changed, and a changed *icon selection*
+does not always trip that — Yasuo only got written because its description had
+also changed. To force a re-derive: delete the specific
+`docs/abilities/<champ>/<slot>.json` and run `--update` (plain import refuses a
+champion if *any* of its records exists). Afterwards check the manifest both
+ways — rows whose file is missing, and files whose sha256 no longer matches
+their row — and re-derive those champions too; `ability:check` fails on either.
+
 **What it silently ate (found 2026-09-06).** The importer writes one file per
 *form*: `assets/images/spells/<slug>_<slot><formSuffix>.png`, suffix `''`, `2`,
 `3`… An ability with three forms therefore claims `yasuo_q.png`, `yasuo_q2.png`,
