@@ -62,8 +62,12 @@ describe('the economy group', () => {
 
 describe('units a player can read', () => {
   it('prints durations in seconds, never in milliseconds', () => {
-    const [line] = linesOf({ turrets: { rebuildTime: 90_000 } }, 'Trụ');
+    const [line] = linesOf({ turrets: { repairDelay: 90_000 } }, 'Trụ');
     expect(line.value).toBe('90s');
+  });
+
+  it('never lists the retired rebuild clock — husks do not rebuild', () => {
+    expect(linesOf({ turrets: { rebuildTime: 90_000 } }, 'Trụ')).toHaveLength(0);
   });
 
   it('prints a fraction as a percentage', () => {

@@ -14,7 +14,12 @@ import {
   type CheckpointWorld,
 } from '../../../src/game/checkpoint/Checkpoint';
 import { sanitizeMomentOverlay } from '../../../src/game/config/savedMoments';
-import { grantItem } from '../../../src/game/economy/ItemShop';
+import { buyItem, grantItem } from '../../../src/game/economy/ItemShop';
+import { canUndoShop, undoShop } from '../../../src/game/economy/ShopHistory';
+import Turret, { DEFAULT_TURRET_PRESET } from '../../../src/game/gameObject/structures/Turret';
+import { HealthRelic } from '../../../src/game/gameObject/structures/HealthRelic';
+import TeamId from '../../../src/game/enums/TeamId';
+import type { QualifiedItem } from '../../../src/content/PackRegistry';
 
 /** Same in-memory storage the director suites use — `persist()` runs on mutations. */
 class MemoryStorage {
@@ -118,6 +123,7 @@ const makeWorld = (): Bench => {
     matchSeed: 4242,
     director,
     net: null,
+    turrets: [] as Turret[],
     minionSpawner: {
       minions: [] as { toRemove: boolean }[],
       enabled: true,
@@ -437,5 +443,183 @@ describe('checkpoint capture → mutate → restore', () => {
 
     expect(restoreCheckpoint(world, checkpoint)).toBe(false);
     expect(world.matchTimeMs).toBe(500_000);
+  });
+});
+
+/** A tower on the checkpoint bench, the `Turret.test.ts` construction. */
+const makeTower = (game: unknown, x: number, y: number): Turret =>
+  new Turret({
+    game: game as ConstructorParameters<typeof Turret>[0]['game'],
+    position: createVector(x, y),
+    teamId: TeamId.BLUE,
+  });
+
+describe('checkpoint: turrets and relic pads', () => {
+  it('resurrects a turret destroyed after the save and re-husks one destroyed before it', () => {
+    const { world, bench } = makeWorld();
+    const hurt = makeTower(bench.game, 800, 300);
+    const rubble = makeTower(bench.game, 900, 300);
+    world.turrets.push(hurt, rubble);
+
+    hurt.stats.health.baseValue = 500;
+    rubble.takeDamage(DEFAULT_TURRET_PRESET.health, undefined);
+
+    const checkpoint = captureCheckpoint(world, 'Mốc trụ');
+
+    // The future being erased: the hurt tower falls, and the rubble is stood
+    // back up by hand (what a later rewind to a different moment can do).
+    hurt.takeDamage(100_000, undefined);
+    expect(hurt.isDead).toBe(true);
+    rubble.respawn();
+    expect(rubble.isDead).toBe(false);
+
+    expect(restoreCheckpoint(world, checkpoint)).toBe(true);
+
+    expect(hurt.isDead).toBe(false);
+    expect(hurt.deathData).toBeNull();
+    expect(hurt.stats.health.value).toBeCloseTo(500, 5);
+    expect(rubble.isDead).toBe(true);
+    expect(rubble.stats.health.value).toBe(0);
+    expect(rubble.deathData?.reviveAfter).toBe(Infinity);
+  });
+
+  it('relic clocks rewind in place', () => {
+    const { world, bench } = makeWorld();
+    const relic = new HealthRelic(bench.game as never, 1_000, 500, 90);
+    bench.game.objectManager.addObject(relic);
+    relic.setClockState(30_000, 92_500);
+
+    const checkpoint = captureCheckpoint(world, 'Mốc pad');
+
+    // The erased future: the wait ran out and the pad stood ready again.
+    relic.setClockState(0, 0);
+    expect(restoreCheckpoint(world, checkpoint)).toBe(true);
+
+    expect(relic.clockState()).toEqual({ cooling: 30_000, coolingTotal: 92_500 });
+  });
+
+  it('turrets and relics cross sessions through the serialized overlay', () => {
+    const first = makeWorld();
+    const fallen = makeTower(first.bench.game, 700, 300);
+    first.world.turrets.push(fallen);
+    const relic = new HealthRelic(first.bench.game as never, 1_000, 500, 90);
+    first.bench.game.objectManager.addObject(relic);
+
+    fallen.takeDamage(DEFAULT_TURRET_PRESET.health, undefined);
+    relic.setClockState(10_000, 92_500);
+
+    const checkpoint = captureCheckpoint(first.world, 'Qua phiên trụ');
+    // Through JSON and the sanitizer — the persisted moment's exact road.
+    const overlay = sanitizeMomentOverlay(JSON.parse(JSON.stringify(checkpoint.overlay)));
+
+    const second = makeWorld();
+    const freshTower = makeTower(second.bench.game, 700, 300);
+    second.world.turrets.push(freshTower);
+    const freshRelic = new HealthRelic(second.bench.game as never, 1_000, 500, 90);
+    // Deliberately left in the pending queue: `applyMomentOverlay` runs from
+    // `Game`'s constructor before the first ObjectManager flush, and the relic
+    // walk must find pads there too.
+    second.bench.game.objectManager.addObject(freshRelic);
+
+    applyMomentOverlay(second.world, overlay);
+
+    expect(freshTower.isDead).toBe(true);
+    expect(freshTower.stats.health.value).toBe(0);
+    expect(freshRelic.clockState()).toEqual({ cooling: 10_000, coolingTotal: 92_500 });
+  });
+
+  it('a moment saved before the fields existed leaves the field of play as it stands', () => {
+    const { world, bench } = makeWorld();
+    const tower = makeTower(bench.game, 800, 300);
+    world.turrets.push(tower);
+    const relic = new HealthRelic(bench.game as never, 1_000, 500, 90);
+    bench.game.objectManager.addObject(relic);
+    relic.setClockState(20_000, 92_500);
+
+    const checkpoint = captureCheckpoint(world, 'Mốc cũ');
+    // The shape a moment persisted before this change reads back as.
+    delete checkpoint.overlay.turrets;
+    delete checkpoint.overlay.relics;
+
+    tower.takeDamage(DEFAULT_TURRET_PRESET.health, undefined);
+    relic.setClockState(5_000, 92_500);
+
+    expect(restoreCheckpoint(world, checkpoint)).toBe(true);
+
+    expect(tower.isDead).toBe(true);
+    expect(relic.clockState()).toEqual({ cooling: 5_000, coolingTotal: 92_500 });
+  });
+
+  it('skips the turret part when the standing count no longer matches', () => {
+    const { world, bench } = makeWorld();
+    const tower = makeTower(bench.game, 800, 300);
+    world.turrets.push(tower);
+
+    const checkpoint = captureCheckpoint(world, 'Mốc lệch');
+
+    // The map's structures changed under the save (cross-session drift).
+    world.turrets.push(makeTower(bench.game, 900, 300));
+    tower.takeDamage(DEFAULT_TURRET_PRESET.health, undefined);
+
+    expect(() => restoreCheckpoint(world, checkpoint)).not.toThrow();
+    // Skipped rather than guessed: the husk stands as the fight left it.
+    expect(tower.isDead).toBe(true);
+  });
+});
+
+describe('checkpoint: the shop ledger', () => {
+  it('an undo of an un-happened purchase is absent after a rewind', () => {
+    const { world, bench } = makeWorld();
+    const player = bench.player;
+    const host = {
+      fountains: [{ teamId: player.teamId, position: { x: 100, y: 100 }, radius: 300 }],
+    };
+    const sword: QualifiedItem = {
+      id: 'ckshop:kiem',
+      packId: 'ckshop',
+      name: 'Kiếm Thử',
+      icon: 'spell_basic_attack',
+      cost: 100,
+    };
+    const cloak: QualifiedItem = { ...sword, id: 'ckshop:ao', name: 'Áo Thử' };
+
+    expect(buyItem(player, sword, host)).toBe(true);
+    const checkpoint = captureCheckpoint(world, 'Mốc mua');
+    const goldThen = player.wallet?.balance ?? 0;
+
+    // The erased future: a second purchase, recorded on the ledger.
+    expect(buyItem(player, cloak, host)).toBe(true);
+    expect(restoreCheckpoint(world, checkpoint)).toBe(true);
+
+    // The future's item left the bag with the rewind, and the ledger with it:
+    // exactly one undo remains — the purchase made before the moment.
+    expect(player.items[1]).toBeFalsy();
+    expect(player.wallet?.balance).toBe(goldThen);
+    expect(canUndoShop(player)).toBe(true);
+    expect(undoShop(player, host)).toBe(true);
+    expect(player.items[0]).toBeFalsy();
+    expect(player.wallet?.balance).toBe(goldThen + sword.cost);
+    expect(canUndoShop(player)).toBe(false);
+  });
+
+  it('a unit with no ledger at the moment comes back with none', () => {
+    const { world, bench } = makeWorld();
+    const player = bench.player;
+    const host = {
+      fountains: [{ teamId: player.teamId, position: { x: 100, y: 100 }, radius: 300 }],
+    };
+    const sword: QualifiedItem = {
+      id: 'ckshop:trong',
+      packId: 'ckshop',
+      name: 'Khiên Thử',
+      icon: 'spell_basic_attack',
+      cost: 100,
+    };
+
+    const checkpoint = captureCheckpoint(world, 'Mốc trống');
+    expect(buyItem(player, sword, host)).toBe(true);
+    expect(restoreCheckpoint(world, checkpoint)).toBe(true);
+
+    expect(canUndoShop(player)).toBe(false);
   });
 });

@@ -102,6 +102,27 @@ export interface MomentMonsterState {
   reviveAfterMs: number;
 }
 
+/**
+ * One turret as a moment stores it. No position — a building stands where the
+ * map put it — and no revive clock: a destroyed turret is a husk with no
+ * countdown, and only a rewind (or a match reset) stands it back up.
+ */
+export interface MomentTurretState {
+  health: number;
+  dead: boolean;
+}
+
+/**
+ * One relic pad's countdown. `cooling` 0 is "standing there now";
+ * `coolingTotal` is what the wait started at, which the pad's arc fills
+ * against — captured rather than re-derived because the match's cooldown
+ * rules may have moved between the moment and the restore.
+ */
+export interface MomentRelicState {
+  cooling: number;
+  coolingTotal: number;
+}
+
 /** The wave clock, so a reopened moment's minions keep the moment's cadence. */
 export interface MomentMinionClock {
   elapsedMs: number;
@@ -123,6 +144,20 @@ export interface MomentOverlay {
   bots: MomentUnitState[];
   minionClock: MomentMinionClock | null;
   monsters: MomentMonsterState[] | null;
+  /**
+   * Index-aligned with `Game.turrets`, whose order is the deterministic
+   * construction order of the map's structure slots. Optional, like `tally`:
+   * a moment saved before turrets joined the overlay simply leaves the field
+   * of play as it stands. A world whose turret count no longer matches skips
+   * this part rather than guessing which building was which.
+   */
+  turrets?: MomentTurretState[] | null;
+  /**
+   * Index-aligned with the relic pads in their deterministic construction
+   * order (the neutral-slot walk). Same optional/count-mismatch contract as
+   * `turrets`.
+   */
+  relics?: MomentRelicState[] | null;
 }
 
 export interface SavedMoment {
@@ -194,6 +229,25 @@ const sanitizeMonsterState = (raw: unknown): MomentMonsterState => {
   };
 };
 
+const sanitizeTurretState = (raw: unknown): MomentTurretState => {
+  const turret = (raw && typeof raw === 'object' ? raw : {}) as Partial<MomentTurretState>;
+  return {
+    health: Math.max(0, finite(turret.health, 0)),
+    dead: turret.dead === true,
+  };
+};
+
+const sanitizeRelicState = (raw: unknown): MomentRelicState => {
+  const relic = (raw && typeof raw === 'object' ? raw : {}) as Partial<MomentRelicState>;
+  const coolingTotal = Math.max(0, finite(relic.coolingTotal, 0));
+  return {
+    // Never longer than the wait it started at — a hand-edited blob must not
+    // freeze a pad's arc past full.
+    cooling: Math.min(Math.max(0, finite(relic.cooling, 0)), coolingTotal),
+    coolingTotal,
+  };
+};
+
 /**
  * Repairs a stored overlay the way `sanitizePregameConfig` repairs the
  * config: every piece independently, garbage dropped rather than thrown on.
@@ -218,13 +272,30 @@ export const sanitizeMomentOverlay = (raw: unknown): MomentOverlay => {
     monsters = [];
     for (const entry of overlay.monsters.slice(0, 256)) monsters.push(sanitizeMonsterState(entry));
   }
-  return {
+  // Optional on purpose, and staying absent when absent: a moment saved
+  // before turrets and relics joined the overlay must read back without
+  // either field, so the apply side can tell "not recorded" from "recorded
+  // empty" and leave the field of play alone.
+  let turrets: MomentTurretState[] | null | undefined;
+  if (Array.isArray(overlay.turrets)) {
+    turrets = [];
+    for (const entry of overlay.turrets.slice(0, 64)) turrets.push(sanitizeTurretState(entry));
+  }
+  let relics: MomentRelicState[] | null | undefined;
+  if (Array.isArray(overlay.relics)) {
+    relics = [];
+    for (const entry of overlay.relics.slice(0, 64)) relics.push(sanitizeRelicState(entry));
+  }
+  const sanitized: MomentOverlay = {
     matchTimeMs: Math.max(0, finite(overlay.matchTimeMs, 0)),
     player: sanitizeUnitState(overlay.player),
     bots,
     minionClock,
     monsters,
   };
+  if (turrets) sanitized.turrets = turrets;
+  if (relics) sanitized.relics = relics;
+  return sanitized;
 };
 
 const sanitizeMoment = (value: unknown): SavedMoment | null => {

@@ -127,6 +127,48 @@ export function clearShopHistory(champion: Champion): void {
   histories.delete(champion);
 }
 
+/**
+ * The ledger as it stands, for a checkpoint ("Mốc đã lưu") to write down.
+ *
+ * Both stacks, as slices holding the same step objects — a step is never
+ * mutated after `recordShopStep`, so sharing references is safe and the
+ * capture costs two array copies. Deliberately not "remember the length and
+ * truncate later": the cap above `shift()`s the *front* of a full stack, so a
+ * moment saved twenty purchases deep followed by more buying would leave a
+ * length-truncation holding rows from the erased future.
+ *
+ * `null` for a champion nothing has recorded — restore reads that as "the
+ * ledger was empty", which it was.
+ */
+export interface ShopHistorySnapshot {
+  done: ShopStep[];
+  undone: ShopStep[];
+}
+
+export function captureShopHistory(champion: Champion): ShopHistorySnapshot | null {
+  const history = histories.get(champion);
+  if (!history) return null;
+  return { done: history.done.slice(), undone: history.undone.slice() };
+}
+
+/**
+ * The captured ledger, written back over whatever the erased future recorded.
+ * Works because restore-in-place keeps the same unit identity, so the WeakMap
+ * entry survives the rewind; a `null` snapshot clears the ledger outright —
+ * every row it holds was recorded after the moment.
+ */
+export function restoreShopHistory(champion: Champion, snapshot: ShopHistorySnapshot | null): void {
+  if (!snapshot) {
+    histories.delete(champion);
+    return;
+  }
+  const history = historyFor(champion);
+  history.done.length = 0;
+  history.done.push(...snapshot.done);
+  history.undone.length = 0;
+  history.undone.push(...snapshot.undone);
+}
+
 export function canUndoShop(champion: Champion): boolean {
   return historyFor(champion).done.length > 0;
 }

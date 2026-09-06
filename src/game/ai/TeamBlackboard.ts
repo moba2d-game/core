@@ -659,7 +659,8 @@ function pickFocus(allies: readonly Champion[], enemies: readonly Champion[]): C
  *
  * A turret is `isImmovable` and re-anchors every frame, so its lane and its
  * place along that lane are properties of the map rather than of the tick. A
- * destroyed one rebuilds where it stood, so this survives that too.
+ * destroyed one stays put as a husk (and stands back up in place if a rewind
+ * or a match reset revives it), so this survives that too.
  */
 const turretPlaces = new WeakMap<Turret, { lane: string; progress: number } | null>();
 

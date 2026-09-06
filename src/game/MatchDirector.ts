@@ -156,6 +156,12 @@ export interface MatchDirectorContext extends GameObjectRuntimeContext {
   /** Narrowed from `AttackableUnit`: the roster is champions, and only a champion has a kit to swap. */
   player: Champion;
   monsters: Monster[];
+  /**
+   * The map's towers, husks included — a destroyed turret stays in the world
+   * now. Optional (the unit-test bench spawns none) and structural: a reset
+   * only needs to ask "is it rubble" and stand it back up.
+   */
+  turrets?: { readonly isDead: boolean; respawn(): void }[];
   minionSpawner: {
     minions: { toRemove: boolean }[];
     enabled: boolean;
@@ -1073,6 +1079,14 @@ export default class MatchDirector {
         behaviour: config.ai.botBehaviours[i],
         persist: false,
       });
+    }
+
+    // "Back to an unplayed match" includes the buildings: a husk stays rubble
+    // for the whole match by design — no rebuild clock exists — so this is
+    // the one place besides a rewind that stands a destroyed tower back up.
+    // `respawn` re-hangs the tower's passives; living towers are left alone.
+    for (const turret of this.game.turrets ?? []) {
+      if (turret.isDead) turret.respawn();
     }
 
     this.seedRules(config.rules);

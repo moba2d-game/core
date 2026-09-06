@@ -503,6 +503,22 @@ describe('MatchDirector persistence', () => {
       expect(ctx.player.tally.damageDealt).toBe(0);
     });
 
+    it('stands destroyed turrets back up — an unplayed match has all its towers', async () => {
+      const { director, ctx } = bench();
+      ctx.spawnJungle = vi.fn();
+      // Husks never rebuild on their own now, so the reset is one of exactly
+      // two seams (with rewind) that may revive one. Structural doubles: the
+      // director only asks "is it rubble" and calls the revive seam.
+      const husk = { isDead: true, respawn: vi.fn() };
+      const standing = { isDead: false, respawn: vi.fn() };
+      ctx.turrets = [husk, standing];
+
+      await director.resetToDefaults();
+
+      expect(husk.respawn).toHaveBeenCalledTimes(1);
+      expect(standing.respawn).not.toHaveBeenCalled();
+    });
+
     it('clears the setup screen’s global AI flags too — it is a reset, not a partial one', async () => {
       savePregameConfig({
         ...DEFAULT_PREGAME_CONFIG,

@@ -271,6 +271,29 @@ export class HealthRelic extends GameObject {
     super({ game, position: createVector(x, y) });
   }
 
+  /**
+   * The countdown as a checkpoint records it. The two fields are private
+   * because nothing in play should reach in; a rewind is the one caller with
+   * a legitimate claim on writing a pad's clock, and it goes through the
+   * setter below.
+   */
+  clockState(): { cooling: number; coolingTotal: number } {
+    return { cooling: this.cooling, coolingTotal: this.coolingTotal };
+  }
+
+  /**
+   * A recorded countdown, written back. Clamped rather than trusted — the
+   * cross-session path feeds this from storage — and `coolingTotal` keeps the
+   * arc's denominator honest: a restored pad mid-wait fills against the wait
+   * it was actually serving at the moment.
+   */
+  setClockState(cooling: number, coolingTotal: number): void {
+    this.coolingTotal = Math.max(0, coolingTotal);
+    // Never past the wait it started at — a pad with no recorded wait is a
+    // pad standing there now.
+    this.cooling = Math.min(Math.max(0, cooling), this.coolingTotal);
+  }
+
   update(): void {
     this.age += deltaTime;
     if (this.cooling > 0) {

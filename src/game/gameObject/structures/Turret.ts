@@ -11,6 +11,7 @@ import type { StructureMark } from '@/game/gameObject/Buff';
 import type {
   AttackableUnitOptions,
   HitPresentationOptions,
+  UnitDeathData,
 } from '@/game/gameObject/attackableUnits/AttackableUnit';
 import Champion from '@/game/gameObject/attackableUnits/Champion';
 import Minion, {
@@ -58,7 +59,12 @@ export interface TurretPresetData {
   attackRange: number;
   attackInterval: number;
   damage: number;
-  /** ms before a destroyed turret comes back. */
+  /**
+   * Kept for map/pack tuning compatibility (`TurretStats.rebuildTime` is a
+   * published tuning key), but nothing counts it down since destroyed became
+   * destroyed-for-the-match: a husk only stands back up through a rewind or a
+   * match reset.
+   */
   rebuildTime: number;
   /** ms without taking damage before it starts repairing itself. */
   repairDelay: number;
@@ -93,8 +99,23 @@ export interface TurretOptions {
  * A team building. It carries the TeamId of the base it defends — `turret1` in
  * summoner_map.json is the blue row, `turret2` the red one — and shoots the
  * nearest hostile thing inside `attackRange`, preferring minions over champions
- * the way a real turret does. Destroying one opens the ground around it up for
- * `rebuildTime`, then it rebuilds where it stood, at full health.
+ * the way a real turret does.
+ *
+ * ## Destroyed is destroyed: the husk
+ *
+ * A turret at 0 HP becomes a dead husk that stays in the world — in
+ * `Game.turrets`, in the object list — for the rest of the match. It never
+ * attacks, never acquires a target, blocks nobody's walking
+ * (`collidesWithUnits` already excludes corpses), lights no fog, and every
+ * scan that aims at buildings already drops it through the standard
+ * `isDead` exclusions. `die()` pins the revive clock so the base class's
+ * countdown can never stand it back up on its own: the rebuild is what a
+ * rewind does ("Mốc đã lưu" restores it in place, exactly like a jungle
+ * camp's body), and what a match reset does (`MatchDirector.applyConfig`
+ * revives every husk — an unplayed match has all its towers).
+ *
+ * The killing blow itself is unchanged: bounty, assists, the announcer line
+ * and the tally are all paid at death, once.
  *
  * Production champions share one of the two lane team ids, so the same
  * `canTakeDamageFromTeam(this.teamId)` rule rejects allied champions and
@@ -170,6 +191,14 @@ export default class Turret extends AttackableUnit {
    */
   _anchor: p5.Vector;
 
+  /**
+   * The kit this tower was built with, kept so a revive can hang it again:
+   * `die()` unwinds every buff through `clearBuffs`, so a turret stood back
+   * up by a rewind or a match reset without this would fight the rest of the
+   * match without its armor, its ramp, or a pack's own passives.
+   */
+  private readonly _passives: readonly TurretPassive[];
+
   constructor({ game, position, preset = DEFAULT_TURRET_PRESET, teamId }: TurretOptions) {
     super({ game, position, visionRadius: 0, teamId });
 
@@ -192,13 +221,17 @@ export default class Turret extends AttackableUnit {
     this.rebuildTime = preset.rebuildTime;
     this.repairDelay = preset.repairDelay;
     this.repairRate = preset.repairRate;
-    this.reviveTime = preset.rebuildTime;
+    // The base class's death countdown must never rebuild a tower: destroyed
+    // stays destroyed for the match (see the class header). `die()` pins the
+    // clock as well, for callers that pass their own.
+    this.reviveTime = Infinity;
 
     this._anchor = this.position.copy();
 
     // Last, with the body finished: a passive that reads `stats.attackDamage`
     // or hangs a buff needs the turret it is given to be a complete one.
-    for (const passive of preset.passives ?? []) passive.onSpawn(this);
+    this._passives = preset.passives ?? [];
+    for (const passive of this._passives) passive.onSpawn(this);
   }
 
   update() {
@@ -450,7 +483,28 @@ export default class Turret extends AttackableUnit {
     this._hitFlash = 180;
   }
 
+  /**
+   * The killing blow, paid exactly as before — bounty, assists, announcer,
+   * tally all run in `super.die` on the transition — and then the clock is
+   * pinned so the corpse can never count itself back up. This catches every
+   * caller: the turret's own `takeDamage` path (which passes `reviveTime`,
+   * already `Infinity`) and a LAN client's snapshot-driven `die`, whose
+   * hardcoded far-future clock would otherwise stand a client's husk back up
+   * under a host that still shows rubble.
+   */
+  die(deathData: UnitDeathData): void {
+    super.die(deathData);
+    if (this.deathData) this.deathData.reviveAfter = Infinity;
+  }
+
+  /**
+   * Deliberately never called by the countdown any more — only a rewind
+   * ("Mốc đã lưu") and a match reset revive a husk. The passives are hung
+   * again because `die()` unwound them; on the transition only, so a caller
+   * sweeping every turret cannot double-stack a living one's kit.
+   */
   respawn() {
+    const wasDead = this.isDead;
     // the base drops the unit on a spawn point; a building rebuilds where it stood
     this.stats.health.baseValue = this.stats.maxHealth.value;
     this.deathData = null;
@@ -460,6 +514,9 @@ export default class Turret extends AttackableUnit {
     this._attackCooldown = 0;
     this.target = null;
     this._targetRank = Infinity;
+    if (wasDead) {
+      for (const passive of this._passives) passive.onSpawn(this);
+    }
   }
 
   // ---------------------------------------------------------------- rendering
@@ -470,9 +527,10 @@ export default class Turret extends AttackableUnit {
 
     push();
     if (this.isDead) {
+      // A husk is rubble and nothing else: no countdown (there is none), no
+      // health bar, no threat ring. Flat, dim, done.
       this.drawRubble(pos, size);
       pop();
-      this.drawRebuildTimer(pos, size);
       return;
     }
 
@@ -546,21 +604,6 @@ export default class Turret extends AttackableUnit {
       const a = (TWO_PI / 6) * i + 0.4;
       circle(pos.x + cos(a) * size * 0.24, pos.y + sin(a) * size * 0.24, size * 0.2);
     }
-  }
-
-  drawRebuildTimer(pos: p5.Vector, size: number) {
-    push();
-    noStroke();
-    fill(190, 190, 200, 200);
-    textAlign(CENTER, CENTER);
-    // Overlay, not world — see Camera.constantSize.
-    textSize(13 * (this.game?.camera?.constantSize?.(1) ?? 1));
-    text(
-      `Xây lại sau ${Math.ceil((this.deathData?.reviveAfter ?? 0) / 1000)}s`,
-      pos.x,
-      pos.y - size * 0.75
-    );
-    pop();
   }
 
   /** Compact bar: the base one is champion-sized and reads as a unit. */

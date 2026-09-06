@@ -199,14 +199,19 @@ describe('Turret as a team building', () => {
     });
   });
 
-  it('keeps its rebuild timer', () => {
+  /**
+   * The husk model in brief; the full suite lives in `TurretHusk.test.ts`,
+   * which — unlike this file — carries no pack-map import and therefore runs
+   * on a core-alone checkout too.
+   */
+  it('a destroyed turret is a husk: dead in place, clock pinned, revivable only through respawn()', () => {
     const turret = makeTurret(TeamId.BLUE, 400, 400);
-    expect(turret.reviveTime).toBe(DEFAULT_TURRET_PRESET.rebuildTime);
+    expect(turret.reviveTime).toBe(Infinity);
 
     turret.takeDamage(DEFAULT_TURRET_PRESET.health, undefined);
     expect(turret.isDead).toBe(true);
     expect(turret.toRemove).toBe(false);
-    expect(turret.deathData?.reviveAfter).toBe(DEFAULT_TURRET_PRESET.rebuildTime);
+    expect(turret.deathData?.reviveAfter).toBe(Infinity);
 
     turret.respawn();
     expect(turret.deathData).toBeNull();

@@ -24,7 +24,11 @@
  * cooldowns, each spell's own-enumerable JSON-able scalars (plus the
  * `stackCount` contract), and the live buff list — constructor reference,
  * scalars, source/target, and the `sourceSpell` *name* for re-linking. The
- * wave clock, and every camp's health/position/revive clock.
+ * wave clock, and every camp's health/position/revive clock. Every turret's
+ * health and husk state (a tower destroyed after the save stands back up; one
+ * destroyed before it goes back to rubble), every relic pad's countdown, and
+ * — in-session only — each roster unit's shop ledger, so the undo surface
+ * cannot reference purchases that un-happened.
  *
  * Not captured, because it is derived or disposable: fog and vision caches,
  * quadtrees, HUD state, bot blackboards, stats (rebuilt from items + buffs —
@@ -51,7 +55,14 @@
 import { contentCatalog } from '@/content/catalog';
 import { rewindBlackboardFor } from '@/game/ai/TeamBlackboard';
 import { buildHeldItem } from '@/game/economy/ItemShop';
+import {
+  captureShopHistory,
+  restoreShopHistory,
+  type ShopHistorySnapshot,
+} from '@/game/economy/ShopHistory';
 import { setComposedValue } from '@/game/net/ClientSession';
+import { HealthRelic } from '@/game/gameObject/structures/HealthRelic';
+import type Turret from '@/game/gameObject/structures/Turret';
 import type Buff from '@/game/gameObject/Buff';
 import type { BuffConstructorArgs } from '@/game/gameObject/Buff';
 import type Spell from '@/game/gameObject/Spell';
@@ -69,7 +80,9 @@ import type {
   MomentMinionClock,
   MomentMonsterState,
   MomentOverlay,
+  MomentRelicState,
   MomentSpellState,
+  MomentTurretState,
   MomentUnitState,
   ScalarFields,
 } from '@/game/config/savedMoments';
@@ -99,6 +112,12 @@ export interface CheckpointWorld {
   matchSeed: number;
   readonly player: Champion;
   monsters: Monster[];
+  /**
+   * Deterministic construction order — the map's structure slots, the same
+   * convention `monsters` follows for camps. Never re-ordered and never
+   * shrunk: a destroyed turret stays in this list as a husk.
+   */
+  turrets: Turret[];
   minionSpawner: WaveClockLike;
   objectManager: { objects: GameObject[]; _objectToBeAdd: GameObject[] };
   director: {
@@ -139,6 +158,13 @@ export interface CheckpointUnit {
   /** Qualified item ids by slot, `null` for an empty slot — bag width kept. */
   bagSlots: (string | null)[];
   buffs: CheckpointBuff[];
+  /**
+   * The shop ledger as it stood — so a rewind cannot leave the undo surface
+   * offering to reverse purchases from the erased future. Live step
+   * references, in-session only, like `buffs`; the persisted overlay carries
+   * nothing (a fresh world's ledger is rightly empty).
+   */
+  shop: ShopHistorySnapshot | null;
 }
 
 export interface Checkpoint {
@@ -309,6 +335,39 @@ const captureMonsters = (world: CheckpointWorld): MomentMonsterState[] | null =>
   }));
 };
 
+const captureTurrets = (world: CheckpointWorld): MomentTurretState[] => {
+  const states: MomentTurretState[] = [];
+  for (const turret of world.turrets) {
+    states.push({ health: turret.stats.health.value, dead: turret.isDead });
+  }
+  return states;
+};
+
+/**
+ * Every relic pad, in construction order. Both object lists, because the one
+ * moment this runs against a pending queue is real: `applyMomentOverlay` is
+ * called from `Game`'s constructor, before the first `ObjectManager.update()`
+ * has flushed the freshly spawned pads into `objects`. In a running match the
+ * pending list is empty and `objects` keeps insertion order (removal is an
+ * ordered splice), so the walk answers the same order on both paths.
+ */
+const relicsOf = (world: CheckpointWorld): HealthRelic[] => {
+  const relics: HealthRelic[] = [];
+  for (const object of world.objectManager.objects) {
+    if (object instanceof HealthRelic) relics.push(object);
+  }
+  for (const object of world.objectManager._objectToBeAdd) {
+    if (object instanceof HealthRelic) relics.push(object);
+  }
+  return relics;
+};
+
+const captureRelics = (world: CheckpointWorld): MomentRelicState[] => {
+  const states: MomentRelicState[] = [];
+  for (const relic of relicsOf(world)) states.push(relic.clockState());
+  return states;
+};
+
 /** Slot list to the dense id list `TemplateItems` stores. A plain loop, per house rule. */
 const denseBag = (slots: readonly (string | null)[]): string[] => {
   const ids: string[] = [];
@@ -335,6 +394,8 @@ export const captureCheckpoint = (
     bots: captured.slice(1).map(entry => entry.state),
     minionClock: captureWaveClock(world.minionSpawner),
     monsters: captureMonsters(world),
+    turrets: captureTurrets(world),
+    relics: captureRelics(world),
   };
 
   // The exact "Trận mẫu" shape, captured at THIS moment rather than at save
@@ -368,6 +429,7 @@ export const captureCheckpoint = (
       unit,
       bagSlots: captured[i].bagSlots,
       buffs: captured[i].buffs,
+      shop: captureShopHistory(unit),
     })),
   };
 };
@@ -568,6 +630,52 @@ const applyMonsters = (world: CheckpointWorld, states: MomentMonsterState[] | nu
   for (let i = 0; i < states.length; i++) applyMonsterState(world.monsters[i], states[i]);
 };
 
+const applyTurretState = (turret: Turret, state: MomentTurretState): void => {
+  if (!state.dead) {
+    // Alive at the moment. A husk stands back up first — health pool, death
+    // state cleared, attack re-armed, passives hung again, all inside
+    // `Turret.respawn` — and then the recorded pool is written over the full
+    // one, under whatever modifiers stand after the revive.
+    if (turret.isDead) turret.respawn();
+    setComposedValue(turret.stats.health, state.health);
+    return;
+  }
+  // Dead at the moment: a husk at 0 HP with no countdown. Direct writes,
+  // never `die()` — a rewind must not pay the tower's bounty, count its
+  // assists or announce its fall a second time. The buffs are unwound the
+  // way `die()` would have unwound them, so a living tower husked by a
+  // rewind does not keep its armor and its ramp running on a corpse.
+  for (const buff of turret.buffs.slice()) buff.deactivateBuff();
+  turret.buffs.length = 0;
+  turret.target = null;
+  turret.stats.health.baseValue = 0;
+  turret.deathData = { reviveAfter: Infinity };
+};
+
+const applyTurrets = (
+  world: CheckpointWorld,
+  states: MomentTurretState[] | null | undefined
+): void => {
+  // Absent means "not recorded" (a moment saved before turrets joined the
+  // overlay): leave the field of play as it stands. A count mismatch means
+  // the map's structures changed under the save: skip rather than guess.
+  if (!states) return;
+  if (world.turrets.length !== states.length) return;
+  for (let i = 0; i < states.length; i++) applyTurretState(world.turrets[i], states[i]);
+};
+
+const applyRelics = (
+  world: CheckpointWorld,
+  states: MomentRelicState[] | null | undefined
+): void => {
+  if (!states) return;
+  const relics = relicsOf(world);
+  if (relics.length !== states.length) return;
+  for (let i = 0; i < states.length; i++) {
+    relics[i].setClockState(states[i].cooling, states[i].coolingTotal);
+  }
+};
+
 /**
  * The in-session rewind — full fidelity, same instances. Answers whether it
  * ran: false with a LAN session attached, where the protocol is forward-only
@@ -598,6 +706,8 @@ export const restoreCheckpoint = (world: CheckpointWorld, checkpoint: Checkpoint
   clearTransientObjects(world);
   applyWaveClock(world.minionSpawner, checkpoint.overlay.minionClock);
   applyMonsters(world, checkpoint.overlay.monsters);
+  applyTurrets(world, checkpoint.overlay.turrets);
+  applyRelics(world, checkpoint.overlay.relics);
 
   const states = [checkpoint.overlay.player, ...checkpoint.overlay.bots];
   for (let i = 0; i < checkpoint.units.length && i < states.length; i++) {
@@ -609,6 +719,10 @@ export const restoreCheckpoint = (world: CheckpointWorld, checkpoint: Checkpoint
     // `applyConfig`.
     if (entry.unit.toRemove) continue;
     applyUnitInPlace(entry.unit, states[i], entry.bagSlots, entry.buffs);
+    // After the bag, which rebuilds slots through `equipItem` directly and
+    // records nothing: the ledger comes back exactly as it stood, so the
+    // undo surface cannot offer to reverse a purchase from the erased future.
+    restoreShopHistory(entry.unit, entry.shop);
   }
   return true;
 };
@@ -627,6 +741,8 @@ export const applyMomentOverlay = (world: CheckpointWorld, overlay: MomentOverla
   world.announcer?.rewindTo(overlay.matchTimeMs);
   applyWaveClock(world.minionSpawner, overlay.minionClock);
   applyMonsters(world, overlay.monsters);
+  applyTurrets(world, overlay.turrets);
+  applyRelics(world, overlay.relics);
 
   applyUnitInPlace(world.player, overlay.player);
   const bots = world.director.bots();
