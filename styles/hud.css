@@ -2133,7 +2133,13 @@ body.touch-ui .corner-btn {
   display: flex;
   flex-direction: column;
   background: var(--hextech-bg);
-  border: 1px solid var(--hextech-border);
+  /* The hextech skin every floating panel wears — see .practice-panel. The
+     rule of the house: a modal smaller than the screen carries this frame so
+     it reads as a panel over the fight; only a truly fullscreen surface may
+     go frameless. A 1px hairline here read as no border at all next to the
+     death recap. */
+  border: 3px solid transparent;
+  border-image: linear-gradient(var(--hextech-teal), var(--hextech-teal-deep)) 1;
   color: var(--hextech-text);
   z-index: 120;
   font-size: 0.9em;
