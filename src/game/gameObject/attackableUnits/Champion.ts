@@ -1017,8 +1017,12 @@ export default class Champion extends AttackableUnit {
    * bar too, and the pet test caught it. That is the whole reason this is two
    * knobs.
    */
-  protected compactBarWidth = 88;
-  protected compactShowsBuffIcons = true;
+  protected get compactBarWidth(): number {
+    return 88;
+  }
+  protected get compactShowsBuffIcons(): boolean {
+    return true;
+  }
 
   drawHealthBar(compact = false) {
     let pos = this.position;

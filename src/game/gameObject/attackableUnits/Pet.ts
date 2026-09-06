@@ -4,7 +4,7 @@ import type Wallet from '@/game/economy/Wallet';
 import Champion, { type ChampionOptions } from './Champion';
 import type { KillCredit } from '@/game/combat/MatchTally';
 import type AttackableUnit from './AttackableUnit';
-import type { UnitDeathData } from './AttackableUnit';
+import type { AttackableUnitRenderOptions, UnitDeathData } from './AttackableUnit';
 import Invisible from '@/game/gameObject/buffs/Invisible';
 import Untargetable from '@/game/gameObject/buffs/Untargetable';
 import { isNetClient } from '@/game/net/netRole';
@@ -350,13 +350,54 @@ export default class Pet extends Champion {
   /** For subclasses with a parting gift (an explosion, a last swing). */
   onExpire(): void {}
 
-  draw(): void {
-    super.draw();
+  /**
+   * Whether this summon is *presented* as one.
+   *
+   * A summon normally wears a summon's badge — the narrow health frame
+   * (`drawHealthBar` below) and the lifetime clock under its feet — and both
+   * exist so a player can tell a summoned body from the champion standing next
+   * to it at a glance.
+   *
+   * A decoy is the one summon that has to fail that test. Its whole job is to
+   * be mistaken for the champion that made it, and a decoy wearing the summon
+   * badge is a decoy with a label on it: the enemy reads the bar before they
+   * read the picture, and the ability does nothing. Set this and the body
+   * presents itself exactly as a champion does — the full frame, no clock.
+   *
+   * Only the *presentation* changes. `killCredit`, `wallet` and `goldBounty`
+   * stay a summon's, and that is not an oversight: `TeamBlackboard` reads
+   * `killCredit` precisely so a bot team does not rally onto a clone, and a
+   * decoy that paid out a champion kill would be a lie the scoreboard told.
+   * The copy a decoy needs — the same pool, the same reach, the same picture —
+   * belongs to the spell that summoned it, which is the only code that knows
+   * who is being impersonated.
+   */
+  disguisedAsChampion = false;
+
+  draw(options: AttackableUnitRenderOptions = {}): void {
+    // A hidden summon is a trap, and a trap stops being one the moment
+    // anything around it can be read. Every part of the standard frame is a
+    // tell — the team ring, the health badge, the facing line, the clock below
+    // — and the loudest was `Untargetable`'s three pulsing rings, which
+    // `setHidden` pairs with `Invisible`: a stealthed body fades to alpha 20,
+    // but those rings were painted at a fixed alpha, so a buried box was a
+    // ring of light sitting on an empty patch of ground. Hidden, a pet paints
+    // its own picture and nothing else; whether that picture is a faint
+    // outline or nothing at all belongs to the subclass that drew it.
+    if (this.hidden) {
+      this.drawAvatar();
+      return;
+    }
+
+    super.draw(options);
     if (this.isDead || this.toRemove) return;
 
     // The clock, under the body: a summon the player cannot time is a summon
     // they cannot plan around. Below the unit on purpose — the health bar and
-    // the buff row already own the space above it.
+    // the buff row already own the space above it. A decoy gets none: it is
+    // the one summon whose job is to be mistaken for a champion, and a timer
+    // under its feet answers the question it exists to pose.
+    if (this.disguisedAsChampion) return;
     const left = this.remainingMs / this.lifeTimeMs;
     const width = (this.animatedValues?.displaySize ?? 50) * 0.9;
     push();
@@ -369,7 +410,9 @@ export default class Pet extends Champion {
   }
 
   /**
-   * A summon always wears the compact frame, whatever the zoom.
+   * A summon always wears the compact frame, whatever the zoom — unless it is
+   * a decoy, which wears the champion's (see `disguisedAsChampion`) and so
+   * passes the camera's own answer straight through.
    *
    * `Champion`'s full frame is 125px wide and paints a score box, a mana strip,
    * level ticks, buff icons and status text around the bar. A pet has none of
@@ -389,10 +432,22 @@ export default class Pet extends Champion {
    * what it is, and the whole point of that is being visibly subordinate to
    * the champion it belongs to.
    */
-  protected override compactBarWidth = 52;
-  protected override compactShowsBuffIcons = false;
+  /**
+   * Accessors rather than the two constants they used to be, because the
+   * answer now depends on a flag a *subclass* sets, and a subclass's field
+   * initialisers run after this class's — a decoy would have been measured
+   * before it had declared itself. `super` rather than a second copy of 88 and
+   * `true`: a decoy is asking for whatever a champion currently wears, not for
+   * a number that happened to match one on the day this was written.
+   */
+  protected override get compactBarWidth(): number {
+    return this.disguisedAsChampion ? super.compactBarWidth : 52;
+  }
+  protected override get compactShowsBuffIcons(): boolean {
+    return this.disguisedAsChampion ? super.compactShowsBuffIcons : false;
+  }
 
-  drawHealthBar(_compact = false): void {
-    super.drawHealthBar(true);
+  drawHealthBar(compact = false): void {
+    super.drawHealthBar(this.disguisedAsChampion ? compact : true);
   }
 }

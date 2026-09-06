@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../../../src/managers/AssetManager', () => ({
-  default: { get: () => undefined, getAsset: () => undefined },
+  default: { get: () => undefined, getAsset: () => undefined, renderable: () => undefined },
 }));
 
 import { createGame, stubGameGlobals } from '../fixtures';
@@ -125,5 +125,104 @@ describe('a pet gets the compact health frame', () => {
     expect(championTexts).toBeGreaterThan(0);
     expect(spies.text).not.toHaveBeenCalled();
     expect(ctxText).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The one summon that must not wear the badge.
+ *
+ * A decoy exists to be mistaken for the champion that made it, and everything
+ * the block above is proud of — a narrow bar, no score, a clock under the feet
+ * — is a label saying "this one is the fake". `disguisedAsChampion` hands the
+ * frame back.
+ */
+describe('a decoy wears the champion frame instead', () => {
+  it('draws the full frame and its score, the same as the body it copies', () => {
+    const game = makeGame();
+    const owner = champion(game);
+    game.setPlayer(owner);
+    const decoy = pet(game, owner);
+    decoy.disguisedAsChampion = true;
+
+    const ctxRect = vi.mocked(drawingContext.fillRect);
+    const ctxText = vi.mocked(drawingContext.fillText);
+    ctxRect.mockClear();
+    ctxText.mockClear();
+
+    decoy.drawHealthBar();
+
+    // The champion frame paints through the native context; the summon badge
+    // never leaves p5, so reading the two spies separates them cleanly.
+    const widest = Math.max(...ctxRect.mock.calls.map(call => call[2] as number));
+    expect(widest).toBeGreaterThan(120);
+    expect(ctxText).toHaveBeenCalled();
+    expect(spies.rect).not.toHaveBeenCalled();
+  });
+
+  it('compacts to the champion width too, so the zoom never gives it away', () => {
+    const game = makeGame();
+    const owner = champion(game);
+    game.setPlayer(owner);
+    const ordinary = pet(game, owner);
+    const decoy = pet(game, owner);
+    decoy.disguisedAsChampion = true;
+
+    ordinary.drawHealthBar(true);
+    const summonBar = Math.max(...spies.rect.mock.calls.map(call => call[2]));
+    spies.rect.mockClear();
+    decoy.drawHealthBar(true);
+    const decoyBar = Math.max(...spies.rect.mock.calls.map(call => call[2]));
+
+    // At mobile zoom every unit wears the compact frame, and a summon's is
+    // deliberately narrower than a champion's. A decoy asks for the champion's
+    // — whatever that currently is — rather than restating a number.
+    expect(summonBar).toBeLessThan(decoyBar);
+  });
+
+  it('paints no lifetime clock under its feet', () => {
+    const game = makeGame();
+    const owner = champion(game);
+    game.setPlayer(owner);
+    const ordinary = pet(game, owner);
+    const decoy = pet(game, owner);
+    decoy.disguisedAsChampion = true;
+
+    ordinary.draw();
+    const withClock = spies.rect.mock.calls.length;
+    spies.rect.mockClear();
+    decoy.draw();
+
+    // Everything the ordinary summon painted through p5 is the badge plus the
+    // clock; the decoy paints neither, so the gap is the whole of both.
+    expect(withClock).toBeGreaterThan(0);
+    expect(spies.rect).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * A hidden summon is a trap, and the frame around it was giving every one of
+ * them away — worst of all `Untargetable`'s three pulsing rings, which
+ * `setHidden` pairs with `Invisible` and which used to be painted at a fixed
+ * alpha while the body under them faded to 20.
+ */
+describe('a hidden summon paints nothing but its own picture', () => {
+  it('draws no health frame, no clock and no buffs while it is hidden', () => {
+    const game = makeGame();
+    const owner = champion(game);
+    game.setPlayer(owner);
+    const trap = pet(game, owner);
+
+    trap.draw();
+    expect(spies.rect, 'the control: in the open it paints its badge').toHaveBeenCalled();
+
+    trap.setHidden(true);
+    expect(trap.hidden).toBe(true);
+    spies.rect.mockClear();
+    const buffs = vi.spyOn(trap, 'drawBuffs');
+
+    trap.draw();
+
+    expect(spies.rect).not.toHaveBeenCalled();
+    expect(buffs).not.toHaveBeenCalled();
   });
 });
