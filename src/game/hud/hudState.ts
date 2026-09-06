@@ -398,6 +398,12 @@ export interface HudState {
    * nothing.
    */
   hasCheckpoint: boolean;
+  /**
+   * Whether the player has saved a point on purpose this match — the auto
+   * "Đầu trận" anchor does not count. Arms the death shortcut's instant
+   * rewind; without it the same button opens the modal to choose from.
+   */
+  hasManualCheckpoint: boolean;
 }
 
 function buildStats(player: any): StatsDisplay {
@@ -1048,5 +1054,8 @@ export function computeHudState(game: Game | undefined | null): HudState | null 
     passive: buildPassive(player),
     canShop: atOwnFountain(player, { fountains: (game as any)?.fountains ?? [] }),
     hasCheckpoint: !(game as any)?.net && ((game as any)?.checkpoints?.length ?? 0) > 0,
+    hasManualCheckpoint:
+      !(game as any)?.net &&
+      !!((game as any)?.checkpoints as { auto: boolean }[] | undefined)?.some(c => !c.auto),
   };
 }

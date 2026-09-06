@@ -25,6 +25,8 @@ defineProps<{
   touch: boolean;
   /** Whether a fight save point exists to rewind to — never true in a LAN match. */
   canRetry?: boolean;
+  /** Whether a deliberate save exists — see `HudState.hasManualCheckpoint`. */
+  retryArmed?: boolean;
 }>();
 
 const hud = inject<HudInteractions>('hud')!;
@@ -42,12 +44,12 @@ const hud = inject<HudInteractions>('hud')!;
       type="button"
       class="spectate-next spectate-retry"
       id="spectate-retry-checkpoint"
-      title="Quay lại mốc gần nhất"
-      @click="hud.rewindToLatestCheckpoint()"
-      v-tap="() => hud.rewindToLatestCheckpoint()"
+      :title="retryArmed ? 'Quay lại mốc gần nhất' : 'Trận này chưa lưu mốc nào — mở bảng Mốc đã lưu để chọn'"
+      @click="hud.retryFromCheckpoint()"
+      v-tap="() => hud.retryFromCheckpoint()"
     >
       <i class="fas fa-clock-rotate-left" aria-hidden="true"></i>
-      <span class="spectate-name">Thử lại từ mốc</span>
+      <span class="spectate-name">{{ retryArmed ? 'Thử lại từ mốc' : 'Thử lại…' }}</span>
     </button>
     <button
       v-if="spectating"

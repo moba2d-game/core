@@ -58,6 +58,8 @@ const props = defineProps<{
    * False in a LAN match, so the retry shortcut never renders there.
    */
   canRetry?: boolean;
+  /** Whether a deliberate save exists — see `HudState.hasManualCheckpoint`. */
+  retryArmed?: boolean;
 }>();
 
 const hud = inject<HudInteractions>('hud')!;
@@ -124,12 +126,12 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onOutsidePoint
         type="button"
         class="death-recap-spectate death-recap-retry"
         id="recap-retry-checkpoint"
-        title="Quay lại mốc gần nhất"
-        @click="hud.rewindToLatestCheckpoint()"
-        v-tap="() => hud.rewindToLatestCheckpoint()"
+        :title="retryArmed ? 'Quay lại mốc gần nhất' : 'Trận này chưa lưu mốc nào — mở bảng Mốc đã lưu để chọn'"
+        @click="hud.retryFromCheckpoint()"
+        v-tap="() => hud.retryFromCheckpoint()"
       >
         <i class="fas fa-clock-rotate-left" aria-hidden="true"></i>
-        <span class="death-recap-spectate-name">Thử lại từ mốc gần nhất</span>
+        <span class="death-recap-spectate-name">{{ retryArmed ? 'Thử lại từ mốc gần nhất' : 'Thử lại…' }}</span>
       </button>
       <button
         v-if="spectating"

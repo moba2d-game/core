@@ -284,10 +284,13 @@ export interface HudInteractions {
   /** Rewind the running match to this save point and close the modal. */
   rewindToCheckpoint(id: string): void;
   /**
-   * The death screen's shortcut: rewind to the newest save point without
-   * opening the modal. Rendered only while `HudState.hasCheckpoint`.
+   * The death screen's shortcut. Armed only by a save the player made on
+   * purpose: with one, it rewinds straight to the newest such save; with
+   * none, it opens the "Mốc đã lưu" modal instead — the auto "Đầu trận"
+   * anchor must never be a single press away from a death, or a newcomer
+   * with twenty minutes of progress learns the feature by losing it.
    */
-  rewindToLatestCheckpoint(): void;
+  retryFromCheckpoint(): void;
   renameCheckpoint(id: string, name: string): void;
   deleteCheckpoint(id: string): void;
   /**
@@ -853,10 +856,17 @@ export function createHudInteractions(game: Game): HudInteractions {
       if (restoreCheckpoint(game, checkpoint)) state.closeCheckpoints();
     },
 
-    rewindToLatestCheckpoint(): void {
+    retryFromCheckpoint(): void {
       if (game.net) return;
-      const checkpoint = game.checkpoints[0];
-      if (checkpoint) restoreCheckpoint(game, checkpoint);
+      // Newest first, so the first deliberate save is the newest one. The
+      // auto anchor never auto-applies — see the interface.
+      for (const checkpoint of game.checkpoints) {
+        if (!checkpoint.auto) {
+          restoreCheckpoint(game, checkpoint);
+          return;
+        }
+      }
+      this.openCheckpoints();
     },
 
     renameCheckpoint(id: string, name: string): void {

@@ -262,6 +262,7 @@ defineExpose({
     :revive-after="state.reviveAfter"
     :spectating="state.spectating"
     :can-retry="state.hasCheckpoint"
+    :retry-armed="state.hasManualCheckpoint"
   />
   <!-- The countdown and the ally being watched, while dead. Bottom-centre:
        the recap owns the top, the callouts own the space under the strip, and
@@ -272,6 +273,7 @@ defineExpose({
     :spectating="state.spectating"
     :touch="hud.touchUi"
     :can-retry="state.hasCheckpoint"
+    :retry-armed="state.hasManualCheckpoint"
   />
   <DesktopHudView v-if="state && !hud.touchUi" :state="state" />
   <MobileHudView v-if="state && hud.touchUi" />
