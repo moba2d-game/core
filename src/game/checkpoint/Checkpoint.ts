@@ -49,6 +49,7 @@
  * of them. The HUD hides every entry point too — this guard is the backstop.
  */
 import { contentCatalog } from '@/content/catalog';
+import { rewindBlackboardFor } from '@/game/ai/TeamBlackboard';
 import { buildHeldItem } from '@/game/economy/ItemShop';
 import { setComposedValue } from '@/game/net/ClientSession';
 import type Buff from '@/game/gameObject/Buff';
@@ -557,6 +558,13 @@ export const restoreCheckpoint = (world: CheckpointWorld, checkpoint: Checkpoint
   // after the target would otherwise carry negative age forever and never
   // leave the screen.
   world.announcer?.rewindTo(checkpoint.matchTimeMs);
+  // Bot clocks share the same time domain: a think or cast stamp from the
+  // erased future would hold a bot frozen until the clock caught back up,
+  // and the team blackboard would keep serving the view it built there.
+  for (const bot of world.director.bots()) {
+    (bot as { brain?: { rewindTo(ms: number): void } }).brain?.rewindTo(checkpoint.matchTimeMs);
+  }
+  rewindBlackboardFor(world);
   clearTransientObjects(world);
   applyWaveClock(world.minionSpawner, checkpoint.overlay.minionClock);
   applyMonsters(world, checkpoint.overlay.monsters);

@@ -225,6 +225,18 @@ export class TeamBlackboard {
     this.rebuild(game, nowMs, sees);
   }
 
+  /**
+   * A rewound match: this board was built at a moment that no longer exists,
+   * and `refreshIfStale` would keep trusting it until the clock caught back
+   * up. Forget everything; the next tick rebuilds from what actually stands.
+   */
+  rewind(): void {
+    this.builtAtMs = Number.NEGATIVE_INFINITY;
+    this.views.clear();
+    this.memories.clear();
+    this.laneMemories.clear();
+  }
+
   private rebuild(game: BlackboardHost, nowMs: number, sees: TeamSeesFn): void {
     // One pass over the object list for the whole game. `filter` cannot narrow
     // types here — the polyfilled prototype in `src/main.ts` puts the
@@ -535,6 +547,11 @@ export class TeamBlackboard {
 }
 
 const boards = new WeakMap<object, TeamBlackboard>();
+
+/** Rewinds `host`'s board if one was ever built — see `TeamBlackboard.rewind`. */
+export function rewindBlackboardFor(host: object): void {
+  boards.get(host)?.rewind();
+}
 
 /**
  * The board for this game, rebuilt if the window has elapsed.

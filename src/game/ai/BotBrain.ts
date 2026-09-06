@@ -485,6 +485,29 @@ export class BotBrain {
   }
 
   /**
+   * A rewound match pulls the shared clock backwards, and every stamp here
+   * is absolute on that clock. A stamp from the erased future gates its
+   * decision shut until time catches back up — a bot that stands in place
+   * holding its spells for a minute is what that looks like. Future stamps
+   * are pulled back (never forward: a stamp already in the past is still
+   * true), pending activations from the erased future are dropped, and the
+   * think stagger is re-jittered so the room's bots do not all wake on one
+   * tick.
+   */
+  rewindTo(nowMs: number): void {
+    if (this.lastThinkAtMs > nowMs) this.lastThinkAtMs = nowMs - Math.random() * THINK_INTERVAL_MS;
+    if (this.lastCastAtMs > nowMs) this.lastCastAtMs = Number.NEGATIVE_INFINITY;
+    if (this.lastDamagedAtMs > nowMs) this.lastDamagedAtMs = Number.NEGATIVE_INFINITY;
+    if (this.pushBlockedUntilMs > nowMs) this.pushBlockedUntilMs = Number.NEGATIVE_INFINITY;
+    // Hostility and half-finished activations re-learn in a second; state
+    // that might describe the erased future is cheaper to forget than to date.
+    this.turretHostileUntilMs.clear();
+    this.pendingCharge = undefined;
+    this.pendingRecast = undefined;
+    this.activeToggles = [];
+  }
+
+  /**
    * The champion's own opinion, asked at four decision points — see
    * `ChampionAI`. Re-resolved against `owner.championId` on every question,
    * because a bot re-rolls its champion on respawn; the compare is one string.
