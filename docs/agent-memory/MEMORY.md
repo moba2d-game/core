@@ -43,3 +43,5 @@
 - [fill-scan](moba2d-fill-scan.md) — npm run fill:scan; pixels blended per frame vs a phone screen, and the 6 wrong numbers it gave before it was trusted
 - [Wiki asset clobber](moba2d-wiki-asset-clobber.md) — the importer owns <slug>_<slot><n>.png and ate the pack's phase art; pack-local art needs a non-numeric suffix
 - [Decoys + hidden traps](moba2d-decoys-and-hidden-traps.md) — Pet.disguisedAsChampion replaces naruto's hack; Untargetable's rings were painted at a fixed alpha, so buried boxes glowed
+- [Roster expansion 2026-09](moba2d-roster-expansion-2026-09.md) — 30 tướng cả 3 pack trong một phiên; specs bền ở moba2d/_specs/; traps mỗi pack đã trả giá
+- [Declared but never wired](moba2d-declared-never-wired.md) — ON_HEAL/ON_BUFF_ADD/InBush khai mà không ai emit; DamageAttribution có mà không expose; và câu trả lời dứt điểm cho contract bump
