@@ -338,7 +338,14 @@ const captureMonsters = (world: CheckpointWorld): MomentMonsterState[] | null =>
 const captureTurrets = (world: CheckpointWorld): MomentTurretState[] => {
   const states: MomentTurretState[] = [];
   for (const turret of world.turrets) {
-    states.push({ health: turret.stats.health.value, dead: turret.isDead });
+    const left = turret.deathData?.reviveAfter ?? 0;
+    states.push({
+      health: turret.stats.health.value,
+      dead: turret.isDead,
+      // A husk from before the rebuild clock existed reads Infinity, which
+      // JSON would turn into null — written down as a full wait instead.
+      reviveAfterMs: Number.isFinite(left) ? Math.max(0, left) : turret.rebuildTime,
+    });
   }
   return states;
 };
@@ -640,7 +647,7 @@ const applyTurretState = (turret: Turret, state: MomentTurretState): void => {
     setComposedValue(turret.stats.health, state.health);
     return;
   }
-  // Dead at the moment: a husk at 0 HP with no countdown. Direct writes,
+  // Dead at the moment: a husk with its remaining rebuild wait. Direct writes,
   // never `die()` — a rewind must not pay the tower's bounty, count its
   // assists or announce its fall a second time. The buffs are unwound the
   // way `die()` would have unwound them, so a living tower husked by a
@@ -649,7 +656,7 @@ const applyTurretState = (turret: Turret, state: MomentTurretState): void => {
   turret.buffs.length = 0;
   turret.target = null;
   turret.stats.health.baseValue = 0;
-  turret.deathData = { reviveAfter: Infinity };
+  turret.deathData = { reviveAfter: state.reviveAfterMs ?? turret.rebuildTime };
 };
 
 const applyTurrets = (

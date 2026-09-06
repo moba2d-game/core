@@ -108,11 +108,12 @@ export interface TurretOptions {
  * attacks, never acquires a target, blocks nobody's walking
  * (`collidesWithUnits` already excludes corpses), lights no fog, and every
  * scan that aims at buildings already drops it through the standard
- * `isDead` exclusions. `die()` pins the revive clock so the base class's
- * countdown can never stand it back up on its own: the rebuild is what a
- * rewind does ("Mốc đã lưu" restores it in place, exactly like a jungle
- * camp's body), and what a match reset does (`MatchDirector.applyConfig`
- * revives every husk — an unplayed match has all its towers).
+ * `isDead` exclusions. The rubble stands for `rebuildTime`, then the base
+ * class's countdown stands the tower back up through `respawn()` — towers
+ * are paper enough that two champions with an item flatten one in seconds,
+ * so permanent loss was too harsh, went the owner's verdict. A rewind
+ * ("Mốc đã lưu" restores it in place, exactly like a jungle camp's body)
+ * and a match reset (`MatchDirector.applyConfig`) revive a husk early.
  *
  * The killing blow itself is unchanged: bounty, assists, the announcer line
  * and the tally are all paid at death, once.
@@ -221,10 +222,10 @@ export default class Turret extends AttackableUnit {
     this.rebuildTime = preset.rebuildTime;
     this.repairDelay = preset.repairDelay;
     this.repairRate = preset.repairRate;
-    // The base class's death countdown must never rebuild a tower: destroyed
-    // stays destroyed for the match (see the class header). `die()` pins the
-    // clock as well, for callers that pass their own.
-    this.reviveTime = Infinity;
+    // The base class's death countdown rebuilds a fallen tower on the
+    // preset's clock (see the class header). `die()` normalizes callers
+    // that pass a clock of their own onto the same wait.
+    this.reviveTime = preset.rebuildTime;
 
     this._anchor = this.position.copy();
 
@@ -486,20 +487,20 @@ export default class Turret extends AttackableUnit {
   /**
    * The killing blow, paid exactly as before — bounty, assists, announcer,
    * tally all run in `super.die` on the transition — and then the clock is
-   * pinned so the corpse can never count itself back up. This catches every
-   * caller: the turret's own `takeDamage` path (which passes `reviveTime`,
-   * already `Infinity`) and a LAN client's snapshot-driven `die`, whose
-   * hardcoded far-future clock would otherwise stand a client's husk back up
-   * under a host that still shows rubble.
+   * normalized onto the preset's rebuild time for every caller: the turret's
+   * own `takeDamage` path (which already passes `reviveTime`) and a LAN
+   * client's snapshot-driven `die`, whose hardcoded far-future clock would
+   * otherwise leave a client's rubble standing an hour under a host whose
+   * tower is long back.
    */
   die(deathData: UnitDeathData): void {
     super.die(deathData);
-    if (this.deathData) this.deathData.reviveAfter = Infinity;
+    if (this.deathData) this.deathData.reviveAfter = this.rebuildTime;
   }
 
   /**
-   * Deliberately never called by the countdown any more — only a rewind
-   * ("Mốc đã lưu") and a match reset revive a husk. The passives are hung
+   * Called by the base countdown when the rebuild clock runs out, and early
+   * by a rewind ("Mốc đã lưu") or a match reset. The passives are hung
    * again because `die()` unwound them; on the transition only, so a caller
    * sweeping every turret cannot double-stack a living one's kit.
    */
@@ -527,9 +528,10 @@ export default class Turret extends AttackableUnit {
 
     push();
     if (this.isDead) {
-      // A husk is rubble and nothing else: no countdown (there is none), no
-      // health bar, no threat ring. Flat, dim, done.
+      // Rubble, no health bar, no threat ring — plus the one number a fallen
+      // tower owes the player: when it stands back up.
       this.drawRubble(pos, size);
+      this.drawRebuildTimer(pos, size);
       pop();
       return;
     }
@@ -593,6 +595,20 @@ export default class Turret extends AttackableUnit {
     pop();
 
     this.drawHealthBar();
+  }
+
+  /** The clock on the rubble. A clock something pinned to forever draws nothing. */
+  drawRebuildTimer(pos: p5.Vector, size: number) {
+    const left = this.deathData?.reviveAfter ?? 0;
+    if (!Number.isFinite(left)) return;
+    push();
+    noStroke();
+    fill(190, 190, 200, 200);
+    textAlign(CENTER, CENTER);
+    // Overlay, not world — see Camera.constantSize.
+    textSize(13 * (this.game?.camera?.constantSize?.(1) ?? 1));
+    text(`Xây lại sau ${Math.ceil(left / 1000)}s`, pos.x, pos.y - size * 0.75);
+    pop();
   }
 
   drawRubble(pos: p5.Vector, size: number) {

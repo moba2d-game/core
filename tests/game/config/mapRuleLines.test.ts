@@ -66,8 +66,10 @@ describe('units a player can read', () => {
     expect(line.value).toBe('90s');
   });
 
-  it('never lists the retired rebuild clock — husks do not rebuild', () => {
-    expect(linesOf({ turrets: { rebuildTime: 90_000 } }, 'Trụ')).toHaveLength(0);
+  it('lists the rebuild clock — a fallen tower stands back up', () => {
+    const [line] = linesOf({ turrets: { rebuildTime: 90_000 } }, 'Trụ');
+    expect(line.label).toBe('Xây lại');
+    expect(line.value).toBe('90s');
   });
 
   it('prints a fraction as a percentage', () => {

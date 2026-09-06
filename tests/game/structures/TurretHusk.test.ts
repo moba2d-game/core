@@ -47,30 +47,30 @@ describe('the turret husk', () => {
   });
   afterEach(() => vi.unstubAllGlobals());
 
-  it('stays destroyed: the death clock is pinned and never counts down', () => {
+  it('falls into rubble and stands back up when the rebuild clock runs out', () => {
     const turret = makeTurret(TeamId.BLUE, 400, 400);
-    expect(turret.reviveTime).toBe(Infinity);
+    expect(turret.reviveTime).toBe(DEFAULT_TURRET_PRESET.rebuildTime);
 
     turret.takeDamage(DEFAULT_TURRET_PRESET.health, undefined);
     expect(turret.isDead).toBe(true);
     expect(turret.toRemove).toBe(false);
-    expect(turret.deathData?.reviveAfter).toBe(Infinity);
+    expect(turret.deathData?.reviveAfter).toBe(DEFAULT_TURRET_PRESET.rebuildTime);
 
-    // 2500 ticks at the stubbed 16ms is 40 simulated seconds — well past the
-    // 30s the old auto-rebuild used to fire at.
+    // 2500 ticks at the stubbed 16ms is 40 simulated seconds — past the 30s
+    // rebuild, so the tower is back where it stood, at full health.
     for (let i = 0; i < 2500; i++) turret.update();
-    expect(turret.isDead).toBe(true);
+    expect(turret.isDead).toBe(false);
     expect(turret.toRemove).toBe(false);
-    expect(turret.deathData?.reviveAfter).toBe(Infinity);
+    expect(turret.stats.health.value).toBe(DEFAULT_TURRET_PRESET.health);
   });
 
-  it('pins the clock even for a caller that passes its own — the LAN client path', () => {
+  it("normalizes a caller's own clock onto the preset's — the LAN client path", () => {
     const turret = makeTurret(TeamId.BLUE);
     // What `ClientSession.applyUnitSnap` does on a host "dead" snapshot: a
-    // far-future clock that would still, one hour in, stand a client's husk
-    // up under a host showing rubble.
+    // far-future clock that would leave a client's rubble standing an hour
+    // under a host whose tower is long back.
     turret.die({ reviveAfter: 3_600_000 });
-    expect(turret.deathData?.reviveAfter).toBe(Infinity);
+    expect(turret.deathData?.reviveAfter).toBe(DEFAULT_TURRET_PRESET.rebuildTime);
   });
 
   it('never fires while dead, whatever stands in range', () => {

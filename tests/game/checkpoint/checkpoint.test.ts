@@ -480,7 +480,7 @@ describe('checkpoint: turrets and relic pads', () => {
     expect(hurt.stats.health.value).toBeCloseTo(500, 5);
     expect(rubble.isDead).toBe(true);
     expect(rubble.stats.health.value).toBe(0);
-    expect(rubble.deathData?.reviveAfter).toBe(Infinity);
+    expect(rubble.deathData?.reviveAfter).toBe(rubble.rebuildTime);
   });
 
   it('relic clocks rewind in place', () => {

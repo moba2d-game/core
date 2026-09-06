@@ -110,6 +110,11 @@ export interface MomentMonsterState {
 export interface MomentTurretState {
   health: number;
   dead: boolean;
+  /**
+   * Remaining rebuild wait, ms; meaningful only when `dead`. Optional: a
+   * moment saved before the clock joined the overlay owes the full wait.
+   */
+  reviveAfterMs?: number;
 }
 
 /**
@@ -231,10 +236,13 @@ const sanitizeMonsterState = (raw: unknown): MomentMonsterState => {
 
 const sanitizeTurretState = (raw: unknown): MomentTurretState => {
   const turret = (raw && typeof raw === 'object' ? raw : {}) as Partial<MomentTurretState>;
-  return {
+  const state: MomentTurretState = {
     health: Math.max(0, finite(turret.health, 0)),
     dead: turret.dead === true,
   };
+  const clock = finite(turret.reviveAfterMs, -1);
+  if (clock >= 0) state.reviveAfterMs = clock;
+  return state;
 };
 
 const sanitizeRelicState = (raw: unknown): MomentRelicState => {

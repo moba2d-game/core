@@ -124,9 +124,7 @@ const turretLines = (tuning: MapTuning | undefined): MapRuleGroup[] =>
       { key: 'attackRange', label: 'Tầm bắn', format: px },
       { key: 'attackInterval', label: 'Nhịp bắn', format: secs },
       { key: 'size', label: 'Kích thước', format: px },
-      // `rebuildTime` is deliberately not listed: a destroyed turret stays a
-      // husk for the whole match now, so a map tuning the old clock has
-      // nothing true to show a player.
+      { key: 'rebuildTime', label: 'Xây lại', format: secs },
       { key: 'repairDelay', label: 'Chờ tự sửa', format: secs },
       { key: 'repairRate', label: 'Tốc tự sửa', format: n },
     ])
