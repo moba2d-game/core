@@ -92,7 +92,9 @@ const makeWolf = (game: unknown, camp: { x: number; y: number; r: number }): Mon
     game,
     preset: {
       name: 'Wolf',
-      avatar: 'monster_Murk_Wolf',
+      // Null avatar, the monsterTier fixture's trick: construction skips the
+      // asset registry, so the suite passes with whatever packs CI installed.
+      avatar: null,
       camp,
       speed: 2,
       size: 40,
