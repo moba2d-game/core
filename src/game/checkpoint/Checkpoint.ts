@@ -107,6 +107,8 @@ export interface CheckpointWorld {
   };
   spawnJungle(): void;
   net: unknown;
+  /** The slice of the announcer a rewind touches; absent on the test bench. */
+  announcer?: { rewindTo(nowMs: number): void };
 }
 
 type BuffClass = new (...args: BuffConstructorArgs) => Buff;
@@ -551,6 +553,10 @@ export const restoreCheckpoint = (world: CheckpointWorld, checkpoint: Checkpoint
   if (world.net) return false;
 
   world.matchTimeMs = checkpoint.matchTimeMs;
+  // The future being erased was announced: kill banners and sprees stamped
+  // after the target would otherwise carry negative age forever and never
+  // leave the screen.
+  world.announcer?.rewindTo(checkpoint.matchTimeMs);
   clearTransientObjects(world);
   applyWaveClock(world.minionSpawner, checkpoint.overlay.minionClock);
   applyMonsters(world, checkpoint.overlay.monsters);
@@ -579,6 +585,8 @@ export const restoreCheckpoint = (world: CheckpointWorld, checkpoint: Checkpoint
  */
 export const applyMomentOverlay = (world: CheckpointWorld, overlay: MomentOverlay): void => {
   world.matchTimeMs = overlay.matchTimeMs;
+  // A fresh boot holds seconds of feed at most, but the clock jump is the same.
+  world.announcer?.rewindTo(overlay.matchTimeMs);
   applyWaveClock(world.minionSpawner, overlay.minionClock);
   applyMonsters(world, overlay.monsters);
 

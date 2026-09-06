@@ -301,6 +301,7 @@ export default class MatchAnnouncer {
   private readonly rows: Announcement[] = [];
   private readonly listeners = new Set<(a: Announcement) => void>();
   private firstBloodTaken = false;
+  private firstBloodAtMs = Number.POSITIVE_INFINITY;
   private seq = 0;
   private stop: (() => void) | null = null;
 
@@ -388,6 +389,51 @@ export default class MatchAnnouncer {
     return this.runs.get(unit)?.streak ?? 0;
   }
 
+  /**
+   * A rewound match un-announces its future.
+   *
+   * Age here is always `now - atMs`, and a row stamped after the rewind
+   * target has negative age forever — it would never prune, so its banner
+   * would never leave the screen. Rows from after the target are dropped,
+   * and the runs are rebuilt from the rows that survive: each row recorded
+   * its killer's streak and multi at the moment it was made, so the newest
+   * surviving row per killer is that run's state, and a surviving death
+   * still ends its victim's run. First blood is untaken again only when its
+   * own moment sits in the discarded future.
+   */
+  rewindTo(nowMs: number): void {
+    const surviving: Announcement[] = [];
+    const dropped: Announcement[] = [];
+    for (const row of this.rows) (row.atMs <= nowMs ? surviving : dropped).push(row);
+    if (dropped.length === 0) return;
+    this.rows.length = 0;
+    this.rows.push(...surviving);
+    for (const row of dropped) {
+      if (row.killerUnit) this.runs.delete(row.killerUnit);
+      if (row.victimUnit) this.runs.delete(row.victimUnit);
+    }
+    for (const row of surviving) {
+      if (row.killerUnit) {
+        this.runs.set(row.killerUnit, {
+          streak: row.streak,
+          multi: row.multi,
+          lastKillAtMs: row.atMs,
+        });
+      }
+      if (row.victimUnit) {
+        const run = this.runs.get(row.victimUnit);
+        if (run) {
+          run.streak = 0;
+          run.multi = 0;
+        }
+      }
+    }
+    if (this.firstBloodAtMs > nowMs) {
+      this.firstBloodTaken = false;
+      this.firstBloodAtMs = Number.POSITIVE_INFINITY;
+    }
+  }
+
   private onDeath(event: UnitDeathEvent): void {
     const { unit: victim } = event;
     // The feed names whoever the kill was *booked* to, which for a summon's
@@ -446,6 +492,7 @@ export default class MatchAnnouncer {
       // Champion on champion only: a tower's first kill is not anyone's blood.
       firstBlood = !this.firstBloodTaken;
       this.firstBloodTaken = true;
+      if (firstBlood) this.firstBloodAtMs = now;
     }
 
     const announcement: Announcement = {

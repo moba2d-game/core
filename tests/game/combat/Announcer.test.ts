@@ -264,6 +264,55 @@ describe('MatchAnnouncer', () => {
     kill(vera, bot);
     expect(announcer.recent(now)).toHaveLength(0);
   });
+
+  describe('rewindTo', () => {
+    it('drops the erased future: rows, banner, and the spree run', () => {
+      now = 1_000;
+      kill(vera, bot);
+      now = 2_000;
+      kill(vera, other);
+      expect(announcer.streakOf(vera)).toBe(2);
+      announcer.rewindTo(1_500);
+      expect(announcer.buffered(1_500)).toHaveLength(1);
+      expect(announcer.banner(1_500, vera)?.atMs).toBe(1_000);
+      expect(announcer.streakOf(vera)).toBe(1);
+      now = 3_000;
+      kill(vera, other);
+      expect(announcer.banner(3_000, vera)?.streak).toBe(2);
+    });
+
+    it('a rewind erasing nothing changes nothing', () => {
+      now = 1_000;
+      kill(vera, bot);
+      announcer.rewindTo(1_000);
+      expect(announcer.streakOf(vera)).toBe(1);
+      expect(announcer.buffered(1_000)).toHaveLength(1);
+    });
+
+    it('first blood is untaken again when its moment is erased', () => {
+      now = 1_000;
+      kill(vera, bot);
+      announcer.rewindTo(500);
+      now = 2_000;
+      kill(bot, vera);
+      const rows = announcer.buffered(now);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.firstBlood).toBe(true);
+    });
+
+    it('and stays taken when it was drawn before the target', () => {
+      now = 1_000;
+      kill(vera, bot);
+      now = 2_000;
+      kill(vera, other);
+      announcer.rewindTo(1_500);
+      now = 3_000;
+      kill(vera, other);
+      const rows = announcer.buffered(now);
+      expect(rows[rows.length - 1]?.firstBlood).toBe(false);
+    });
+  });
+
 });
 
 describe('the words', () => {
