@@ -122,6 +122,9 @@ export class DeathCamera<T> {
       return;
     }
     if (this.deathAtMs === null) this.deathAtMs = now;
+    // A rewound match can pull `now` behind the stamp, and a stamp from the
+    // erased future would hold the camera on the corpse for the whole gap.
+    if (this.deathAtMs > now) this.deathAtMs = now;
     if (now - this.deathAtMs < DEATH_CAMERA_LINGER_MS) return;
 
     const allies = this.context.allies();

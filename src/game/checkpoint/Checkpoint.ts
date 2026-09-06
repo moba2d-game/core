@@ -565,6 +565,13 @@ export const restoreCheckpoint = (world: CheckpointWorld, checkpoint: Checkpoint
     (bot as { brain?: { rewindTo(ms: number): void } }).brain?.rewindTo(checkpoint.matchTimeMs);
   }
   rewindBlackboardFor(world);
+  // Unit-level clocks share the domain too: combat stamps, assist ledgers,
+  // recap logs and fog reveals all remember absolute moments — see
+  // `AttackableUnit.rewindClocks`.
+  for (const object of world.objectManager.objects) {
+    const unit = object as { rewindClocks?: (ms: number) => void };
+    if (typeof unit.rewindClocks === 'function') unit.rewindClocks(checkpoint.matchTimeMs);
+  }
   clearTransientObjects(world);
   applyWaveClock(world.minionSpawner, checkpoint.overlay.minionClock);
   applyMonsters(world, checkpoint.overlay.monsters);

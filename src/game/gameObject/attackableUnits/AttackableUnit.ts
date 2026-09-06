@@ -1447,6 +1447,27 @@ export default class AttackableUnit extends GameObject {
    * everything before it was a different one. Searched from the newest end so
    * a long skirmish of back-to-back exchanges stays whole.
    */
+  /**
+   * A rewound match pulls `matchTimeMs` backwards, and everything here that
+   * remembers a moment remembers it as an absolute stamp on that clock. A
+   * stamp from the erased future keeps telling its story after the rewind:
+   * combat that "just happened" a minute from now, an assist toward a kill
+   * that was unhappened, recap lines for damage nobody dealt, a reveal that
+   * outlives its fog window by the whole rewound gap. Future stamps are
+   * dropped or pulled back; a stamp already in the past is still true and
+   * stays. Countdown fields need nothing — they never compare against the
+   * clock.
+   */
+  rewindClocks(nowMs: number): void {
+    if (this.lastCombatMs > nowMs) this.lastCombatMs = -Infinity;
+    if (this._revealedUntilMs > nowMs) this._revealedUntilMs = 0;
+    for (const [unit, seen] of this._assistLedger) {
+      if (seen > nowMs) this._assistLedger.delete(unit);
+    }
+    rewindDamageLog(this.recentDamageLog, nowMs);
+    rewindDamageLog(this.recentDamageDealtLog, nowMs);
+  }
+
   private pruneLog(log: DamageLogEntry[]): void {
     for (let i = log.length - 1; i > 0; i--) {
       if (log[i].atMs - log[i - 1].atMs >= DEATH_RECAP_ENGAGEMENT_GAP_MS) {
@@ -1984,6 +2005,13 @@ export interface DamageNumberEvent {
   /** The swing's crit roll, so a client can show the crit it cannot roll. */
   crit?: boolean;
 }
+
+/** Drops recap entries stamped after a rewind's target moment. */
+const rewindDamageLog = (log: DamageLogEntry[], nowMs: number): void => {
+  for (let i = log.length - 1; i >= 0; i--) {
+    if (log[i].atMs > nowMs) log.splice(i, 1);
+  }
+};
 
 export interface DamageLogEntry {
   /** When the *latest* hit folded into this entry landed — see `DEATH_RECAP_MERGE_MS`. */
