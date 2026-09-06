@@ -249,6 +249,17 @@ interface CapturedUnit {
   buffs: CheckpointBuff[];
 }
 
+/** Own-enumerable numeric fields of the unit's tally — robust to new columns. */
+const captureTally = (unit: Champion): Record<string, number> => {
+  const out: Record<string, number> = {};
+  const tally = unit.tally as unknown as Record<string, unknown>;
+  for (const key of Object.keys(tally)) {
+    const value = tally[key];
+    if (typeof value === 'number') out[key] = value;
+  }
+  return out;
+};
+
 const captureUnit = (unit: Champion): CapturedUnit => {
   const bagSlots: (string | null)[] = [];
   for (const held of unit.items ?? []) bagSlots.push(held?.def?.id ?? null);
@@ -264,6 +275,7 @@ const captureUnit = (unit: Champion): CapturedUnit => {
       dead: unit.isDead,
       reviveAfterMs: Math.max(0, unit.deathData?.reviveAfter ?? 0),
       gold: unit.wallet?.balance ?? 0,
+      tally: captureTally(unit),
       spells: captureSpells(unit),
     },
     bagSlots,
@@ -456,6 +468,17 @@ const applyUnitInPlace = (
 
   unit.teleportTo(state.x, state.y);
   unit.wallet?.syncTo(state.gold);
+
+  // The scoreboard un-happens with the rest: kills, deaths, assists, CS and
+  // damage totals from the erased future would otherwise keep standing on
+  // the board. Keys come off the live tally, so a column added after a
+  // moment was saved resets to zero rather than surviving the rewind.
+  if (state.tally) {
+    const tally = unit.tally as unknown as Record<string, unknown>;
+    for (const key of Object.keys(tally)) {
+      if (typeof tally[key] === 'number') tally[key] = state.tally[key] ?? 0;
+    }
+  }
 
   const spells = unit.spells ?? [];
   for (let i = 0; i < spells.length; i++) {

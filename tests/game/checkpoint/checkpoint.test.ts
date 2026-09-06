@@ -186,6 +186,43 @@ describe('checkpoint capture → mutate → restore', () => {
     expect(world.matchTimeMs).toBe(60_000);
   });
 
+  it('un-happens the scoreboard: the tally rolls back to the moment', () => {
+    const { world, bench } = makeWorld();
+    const player = bench.player;
+    player.tally.kills = 2;
+    player.tally.deaths = 1;
+    player.tally.minionsKilled = 30;
+
+    const checkpoint = captureCheckpoint(world, 'Mốc 1');
+
+    // The erased future: a spree, a death, a wave farmed, damage traded.
+    player.tally.kills = 7;
+    player.tally.deaths = 3;
+    player.tally.assists = 4;
+    player.tally.minionsKilled = 55;
+    player.tally.damageDealt = 12_345;
+
+    expect(restoreCheckpoint(world, checkpoint)).toBe(true);
+
+    expect(player.tally.kills).toBe(2);
+    expect(player.tally.deaths).toBe(1);
+    expect(player.tally.assists).toBe(0);
+    expect(player.tally.minionsKilled).toBe(30);
+    expect(player.tally.damageDealt).toBe(0);
+  });
+
+  it('a moment saved without a tally leaves the board as it stands', () => {
+    const { world, bench } = makeWorld();
+    const player = bench.player;
+    const checkpoint = captureCheckpoint(world, 'Mốc 1');
+    delete checkpoint.overlay.player.tally;
+    player.tally.kills = 3;
+
+    expect(restoreCheckpoint(world, checkpoint)).toBe(true);
+
+    expect(player.tally.kills).toBe(3);
+  });
+
   it('rebuilds the buff set — scalars, a stacked family, and the source-spell link', () => {
     const { world, bench } = makeWorld();
     const player = bench.player;
@@ -321,20 +358,6 @@ describe('checkpoint capture → mutate → restore', () => {
     expect(player.isDead).toBe(true);
     expect(player.deathData?.reviveAfter).toBe(4200);
     expect(player.stats.health.baseValue).toBe(0);
-  });
-
-  it('leaves the tally alone — a rewind undoes the fight, not the diary', () => {
-    const { world, bench } = makeWorld();
-    const player = bench.player;
-    const checkpoint = captureCheckpoint(world, 'Mốc');
-
-    player.tally.kills = 3;
-    player.tally.deaths = 2;
-
-    restoreCheckpoint(world, checkpoint);
-
-    expect(player.tally.kills).toBe(3);
-    expect(player.tally.deaths).toBe(2);
   });
 
   it('rewinds the wave clock and clears the field', () => {

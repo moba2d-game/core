@@ -84,6 +84,12 @@ export interface MomentUnitState {
   /** Remaining respawn clock, ms. Meaningful only when `dead`. */
   reviveAfterMs: number;
   gold: number;
+  /**
+   * The scoreboard's numbers at the moment — own-enumerable numeric fields
+   * of `MatchTally`, by name. Optional: a moment saved before the tally
+   * joined the overlay simply leaves the board as it stands when applied.
+   */
+  tally?: Record<string, number>;
   /** Index-aligned with the unit's spell slots. */
   spells: (MomentSpellState | null)[];
 }
