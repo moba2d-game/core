@@ -2092,15 +2092,19 @@ body.touch-ui .corner-btn {
 /* ---------------------------------------------------------------- Mốc đã lưu
 
    The fight-save-point surface: a second corner cluster in the one region
-   both layouts leave empty (top-left — `TouchLayout.CORNER_BUTTON_BOX` holds
-   the right corner at two buttons), and the modal it opens over the paused
-   match. Same flat vocabulary as the practice panel and the Trận mẫu shelf:
+   the minimap leaves free (just under its collapsed edge —
+   `TouchLayout.CORNER_BUTTON_BOX` holds the right corner at two buttons),
+   and the modal it opens over the paused match. Same flat vocabulary as the practice panel and the Trận mẫu shelf:
    hairline separators, muted meta lines, pill buttons that arm for the
    destructive press. No glows, no shadows, no depth. */
 .corner-cluster-left {
   position: fixed;
-  top: calc(6px + var(--safe-top));
-  left: calc(6px + var(--safe-left));
+  /* The top-left corner itself belongs to the canvas minimap, so this hangs
+     just below the map's bottom edge: 12px map margin + the collapsed edge
+     (the clamp mirrors collapsedMinimapSize: 21% of the shorter side, held
+     between 96 and 150px) + a 6px gap. Left-aligned to the map's own margin. */
+  top: calc(var(--safe-top) + 12px + clamp(96px, 21vmin, 150px) + 6px);
+  left: calc(12px + var(--safe-left));
   z-index: 120;
 
   display: flex;

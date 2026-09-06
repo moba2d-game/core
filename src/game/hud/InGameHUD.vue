@@ -177,7 +177,9 @@ defineExpose({
     The opposite corner, and its own cluster: the way into "Mốc đã lưu". It
     cannot join the row above — `TouchLayout.CORNER_BUTTON_BOX` holds that at
     two buttons so the canvas recall clears the expanded minimap on a 667px
-    phone — and top-left is the one region empty in both layouts. Hidden with
+    phone — and the top-left corner itself is the canvas minimap's, which a
+    DOM survey does not see, so the cluster hangs just below the map's
+    collapsed edge (`.corner-cluster-left` mirrors `collapsedMinimapSize`). Hidden with
     the rest of the chrome behind every modal, and gone entirely in a LAN
     match, where rewinding is refused wholesale.
   -->
