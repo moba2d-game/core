@@ -324,3 +324,39 @@ it keeps drawing on the corpse and reappears at the spawn point.
 Anything reaching beyond the caster's own body must be a `SpellObject`, not
 `castSpec.vfx`: `Champion.draw()` is skipped when the caster is culled or
 fogged, so hanging a long effect off it makes the damage land invisibly.
+
+Call `attachTo` **after** `addBuff`, never before. It resolves the instance the
+unit actually ticks (`SpellObject.liveBuffOn`), and before the buff is on the
+unit there is nothing to resolve — `attachmentLost` then latches true on the
+object's first frame and the effect plays out at the point of the cast while
+the champion dashes away from it. Tryndamere's whirling blades shipped that way
+for weeks; the symptom reads like a drawing bug and is not one.
+
+## The picture has to be the hitbox — `reach:scan`
+
+The single most reported class of "chiêu này khó chịu" is an effect whose
+drawing and whose damage disagree about how far it goes. Two shipped at once:
+Riven's Q cut at `Q_RADIUS` and painted `Q_RADIUS * 1.12` (and `* 1.16` again
+under R), so the crescent was up to 30% wider than the wedge; Tryndamere's E
+queried `HIT_RADIUS + size / 2` and drew `HIT_RADIUS`, so the blades were a
+champion-radius *short* of what they cut. Neither is findable by reading — the
+query is in `onSpellCast` and the drawing is two hundred lines down in a
+`SpellObject`, and each half is correct on its own.
+
+`scripts/reach-scan.mjs` holds the two halves side by side in about half a
+second. It ships as the `moba2d-reach-scan` bin, so a pack runs `npm run
+reach:scan` from its own repository and gets its own trees; run from core with
+no arguments it scans core's game tree plus every pack linked beside it. Three
+rules —
+`drawn-wider-than-it-hits`, `drawn-narrower-than-it-hits`, `reach-never-painted`
+— each proven in `tests/scripts/reachScan.test.ts` against the bug it came from
+*and* against the nearest correct shape. Like `perf:scan` it reports rather than
+gates, ranks worst-first, and takes `--max N` to hold a line.
+
+**The rule it is really enforcing, which a scan cannot see everywhere:** compute
+the reach once, and hand that number to whatever draws it. A radius recomputed
+in the drawing is a second source of truth, and the two drift the first time
+somebody tunes one of them. Passing it through the `SpellObject`'s constructor
+also puts it beyond this scan by design — it only compares when both halves name
+the same constant, which is why it stays quiet on correct code and why
+`--coverage` prints how much it could actually see.

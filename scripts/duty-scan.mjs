@@ -46,9 +46,10 @@
  *    caster count.
  */
 import ts from 'typescript';
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { packRootFrom } from './lib/packRoot.mjs';
 
 const CORE = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -174,8 +175,60 @@ export function scanTree(root) {
   return rows;
 }
 
-const invokedDirectly =
-  process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url));
+/**
+ * What to scan when nobody said.
+ *
+ * Two answers, because since `pack-link` started writing `.bin` shims there are
+ * two callers. Run from core it means core's own tree plus every pack linked
+ * beside it, discovered from the links themselves — core does not get to know
+ * any pack's name (`tests/content/vocabularyBoundary.test.ts`), and a
+ * hardcoded list was also silently wrong from anywhere else. Run from a pack —
+ * through the bin, which is the whole reason this ships as one — it means
+ * *that* pack, found by walking up to the nearest `package.json` that depends
+ * on `@moba2d/core` rather than by counting `..` segments or looking for a
+ * directory called `packs`: a separated pack repository has neither.
+ */
+function packTrees(packRoot) {
+  return ['spells', 'monsters'].map(dir => join(packRoot, dir)).filter(existsSync);
+}
+
+function linkedPackTrees() {
+  const linked = join(CORE, 'node_modules', '@moba2d');
+  if (!existsSync(linked)) return [];
+  return readdirSync(linked)
+    .filter(name => name.startsWith('content-'))
+    .flatMap(name => packTrees(join(linked, name)));
+}
+
+function defaultRoots(coreTrees) {
+  let packRoot = null;
+  try {
+    packRoot = packRootFrom(process.cwd());
+  } catch {
+    // Core's own repository, or somewhere with no pack above it.
+    packRoot = null;
+  }
+  if (packRoot) return packTrees(packRoot);
+  return [...coreTrees, ...linkedPackTrees()];
+}
+
+// `realpathSync`, not a bare `resolve()`: reached through the
+// `node_modules/.bin/` symlink, `process.argv[1]` stays the symlink path while
+// `import.meta.url` is already resolved, so the two never compare equal and the
+// whole block below silently never runs — no output, no error, exit 0. See
+// `scripts/check-seams.mjs`'s own header, where this cost a day. It went live
+// for all three scans the moment `pack-link` started writing their `.bin`
+// shims, so a linked pack could reach them at all.
+const scriptPath = fileURLToPath(import.meta.url);
+const invokedDirectly = (() => {
+  const invoked = process.argv[1];
+  if (!invoked) return false;
+  try {
+    return realpathSync(resolve(invoked)) === scriptPath;
+  } catch {
+    return resolve(invoked) === scriptPath;
+  }
+})();
 
 if (invokedDirectly) {
   const argv = process.argv.slice(2);
@@ -193,9 +246,7 @@ if (invokedDirectly) {
   const max = valueOf('max') === null ? null : Number(valueOf('max'));
   const floor = valueOf('floor') === null ? 0.5 : Number(valueOf('floor'));
 
-  const roots = targets.length
-    ? targets.map(t => resolve(t))
-    : ['lol', 'naruto', 'dota'].map(pack => resolve(CORE, '..', pack, 'spells')).filter(existsSync);
+  const roots = targets.length ? targets.map(t => resolve(t)) : defaultRoots([]);
 
   const rows = roots.flatMap(root => scanTree(root)).sort((a, b) => b.uptime - a.uptime);
   const shown = rows.filter(row => row.uptime >= floor);

@@ -54,7 +54,7 @@
  */
 import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { lstat, mkdir, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { realpathSync } from 'node:fs';
@@ -137,6 +137,48 @@ async function linkTo(path, target) {
   await symlink(target, path, process.platform === 'win32' ? 'junction' : 'dir');
 }
 
+/**
+ * Core's bins, reachable from inside the pack.
+ *
+ * npm writes `node_modules/.bin` shims at *install* time, from the bin list
+ * core declared on the day of that install. A dev link replaces the installed
+ * copy of core with a symlink and never touches `.bin`, so every bin core has
+ * added since — `moba2d-perf-scan`, `moba2d-duty-scan`, `moba2d-perf-guard`,
+ * `moba2d-shoot-vfx`, `moba2d-reach-scan` — resolved to **nothing** in a linked
+ * checkout. `npx moba2d-perf-scan` inside a pack went to the public registry
+ * and came back `404`, which is a confusing way to be told a tool exists three
+ * directories away. Shipping a bin was never enough on its own; this is the
+ * other half.
+ *
+ * Written **relative** to `../@moba2d/core`, so the shim follows whatever that
+ * name currently resolves to rather than pinning the absolute path of the core
+ * checkout that happened to be linked when it was created — an unlink then
+ * leaves the pack running the npm copy's tools, not a stale checkout's.
+ */
+async function linkBins(pack, core) {
+  let manifest;
+  try {
+    manifest = JSON.parse(await readFile(join(core, 'package.json'), 'utf8'));
+  } catch {
+    return [];
+  }
+  const bins = manifest.bin ?? {};
+  const written = [];
+  for (const [name, target] of Object.entries(bins)) {
+    const absolute = join(core, target.replace(/^\.\//, ''));
+    if (!existsSync(absolute)) continue;
+    // A shim is only useful if the file behind it can be executed; a script
+    // added with a plain redirect arrives 644 and fails with EACCES.
+    await chmod(absolute, 0o755).catch(() => {});
+    const shim = join(pack, 'node_modules', '.bin', name);
+    await mkdir(dirname(shim), { recursive: true });
+    await rm(shim, { force: true });
+    await symlink(join('..', SCOPE, 'core', target.replace(/^\.\//, '')), shim, 'file');
+    written.push(name);
+  }
+  return written;
+}
+
 /** Whether `path` exists and is a symlink — the two questions asked together. */
 async function isLink(path) {
   try {
@@ -184,6 +226,7 @@ export async function linkPack({ coreRoot = coreRootDefault, packDir }) {
   }
   await linkTo(coreInPack, core);
   await writeFile(join(pack, 'node_modules', SCOPE, MARKER), `${core}\n`);
+  await linkBins(pack, core);
 
   // core -> pack.
   await linkTo(join(core, 'node_modules', SCOPE, `${PACKAGE_PREFIX}${name}`), pack);

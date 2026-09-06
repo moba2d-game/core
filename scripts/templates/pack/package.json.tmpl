@@ -14,6 +14,8 @@
     "typecheck": "tsc -p tsconfig.json",
     "check-unused": "moba2d-check-unused",
     "check-seams": "moba2d-check-seams ./spells",
+    "reach:scan": "moba2d-reach-scan",
+    "fill:scan": "moba2d-fill-scan",
     "test": "vitest run",
     "build": "npm run assets:generate && npm run catalog:generate && vite build && moba2d-write-manifest --name=\"__PACK_NAME__\"",
     "manifest:write": "moba2d-write-manifest --name=\"__PACK_NAME__\"",

@@ -35,3 +35,11 @@
 - [Flat UI rule](moba2d-flat-ui.md) — no glows/blur anywhere; allowed vocabulary; hextech-css CDN hover fetch was an offline hole
 - [Practice presets](moba2d-practice-presets.md) — Trận mẫu + Mốc đã lưu; restore-in-place law, buffs don't cross sessions, bag-diff edge
 - [LOL2D handover](moba2d-lol2d-handover.md) — old repo redirects + kill-switch SW + standalone guide; core Cài app button
+- [attachTo ordering](moba2d-attachto-ordering.md) — attachTo AFTER addBuff or the effect detaches on frame one; deactivated buffs linger in unit.buffs
+- [Riven Q + no body spin](moba2d-riven-q-and-no-body-spin.md) — lane∪fan Q1/Q2, leaping Q3 slam; never rotate a champion avatar
+- [reach-scan](moba2d-reach-scan.md) — npm run reach:scan; does the picture reach as far as the damage? 69-finding baseline and the five narrowings that got it there
+- [Ability scaling diagnosis](moba2d-ability-scaling-diagnosis.md) — it DOES scale; how to prove it, and the two real reasons a champ falls off late
+- [Phone fill rate](moba2d-phone-fill-rate.md) — phone-only lag is fill AREA not CPU; the arithmetic, and the 3 blind spots in measure-frame-cost
+- [fill-scan](moba2d-fill-scan.md) — npm run fill:scan; pixels blended per frame vs a phone screen, and the 6 wrong numbers it gave before it was trusted
+- [Wiki asset clobber](moba2d-wiki-asset-clobber.md) — the importer owns <slug>_<slot><n>.png and ate the pack's phase art; pack-local art needs a non-numeric suffix
+- [Decoys + hidden traps](moba2d-decoys-and-hidden-traps.md) — Pet.disguisedAsChampion replaces naruto's hack; Untargetable's rings were painted at a fixed alpha, so buried boxes glowed

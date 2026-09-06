@@ -258,7 +258,7 @@ describe('package.json public surface', () => {
     expect(pkg.name).toBe('@moba2d/core');
   });
 
-  it('declares exactly fourteen bins, the nine below plus the five a pack no longer copies', () => {
+  it('declares exactly sixteen bins, the eleven below plus the five a pack no longer copies', () => {
     // The scaffold (content-pack-and-repo-split batch 6 task 8) widened this
     // from two to four: `moba2d-pack-new` scaffolds a fresh, runnable pack
     // into an empty directory, and `moba2d-pack-add` adds one piece of
@@ -291,6 +291,24 @@ describe('package.json public surface', () => {
       // two of the four that mattered. A pack is its own repository and owns
       // its own balance, so it has to be able to run this from inside one.
       'moba2d-duty-scan': './scripts/duty-scan.mjs',
+      // Fifteen, not fourteen, and the third scan for the same reason as the
+      // other two. `moba2d-reach-scan` asks whether an ability's picture
+      // reaches as far as its damage does — the two abilities it was written
+      // from had each shipped for weeks with a hitbox their own art disagreed
+      // with, and both were found by a player rather than by anything here,
+      // because a test asserts on damage and nothing asserts on pixels. A
+      // pack owns its own art and its own hitboxes, so it has to be able to
+      // run this from inside its own repository.
+      'moba2d-reach-scan': './scripts/reach-scan.mjs',
+      // Sixteen, not fifteen, and the fourth scan. `moba2d-fill-scan` measures
+      // the one cost every other instrument here is structurally blind to:
+      // pixels blended, which is what a phone pays and what `perf-scan` cannot
+      // see because one `circle()` is one call whether it covers ten pixels or
+      // a million. It exists because a phone dropped to 15fps in a fight that
+      // held 60 on a desktop and nothing in this repository could say why. A
+      // pack owns its own art, so it has to be able to run this from inside
+      // its own repository.
+      'moba2d-fill-scan': './scripts/fill-scan.mjs',
       'moba2d-perf-guard': './scripts/perf-guard.mjs',
       'moba2d-generate-spell-catalog': './scripts/generate-spell-catalog.mjs',
       'moba2d-pack-new': './scripts/pack-new.mjs',

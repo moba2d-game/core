@@ -27,7 +27,7 @@
  *   node tests/e2e/measure-frame-cost.mjs
  *   MOBA2D_CPU_THROTTLE=6 MOBA2D_TARGET_MINIONS=150 node tests/e2e/measure-frame-cost.mjs
  */
-import { CFG_KEY, startHarness, startMatch } from './harness.mjs';
+import { CFG_KEY, PHONE_VIEWPORT, startHarness, startMatch } from './harness.mjs';
 
 const THROTTLE = Number(process.env.MOBA2D_CPU_THROTTLE ?? 10);
 const TARGET_MINIONS = Number(process.env.MOBA2D_TARGET_MINIONS ?? 200);
@@ -49,7 +49,30 @@ const WINDOW_MS = Number(process.env.MOBA2D_WINDOW_MS ?? 6_000);
  */
 const BOTS = Number(process.env.MOBA2D_BOTS ?? 0);
 
-const { url, page, report, check, guard } = await startHarness();
+/**
+ * Measure the phone's frame, not the desktop's.
+ *
+ * `MOBA2D_MOBILE=1` runs a phone viewport with the touch controls and
+ * `deviceScaleFactor: 3` — which is the whole point, because a phone rasterises
+ * roughly **nine times the pixels** of the same layout at 1x. Every run this
+ * script had ever done was desktop at 1x, so the one cost it could not see was
+ * the one that scales with pixels rather than with calls: translucent fills,
+ * the fog's composites, anything painted over a large area. A row's `usPerCall`
+ * barely moves for those and the frame doubles anyway.
+ *
+ * It is not a phone's GPU — it is this machine's, drawing a phone's pixel
+ * count. That makes it a *ratio* instrument: run it against the desktop number
+ * and read the multiplier, never the absolute ms.
+ *
+ *   MOBA2D_MOBILE=1 MOBA2D_BOTS=6 node tests/e2e/measure-frame-cost.mjs
+ */
+const MOBILE = process.env.MOBA2D_MOBILE === '1';
+
+const { url, page, report, check, guard } = await startHarness(
+  MOBILE
+    ? { viewport: PHONE_VIEWPORT, hasTouch: true, touch: true, deviceScaleFactor: 3 }
+    : {}
+);
 
 await guard(async () => {
   if (BOTS > 0) {
@@ -59,7 +82,20 @@ await guard(async () => {
       [
         CFG_KEY,
         {
-          ai: { count: BOTS, autoMove: true, autoAttack: true, autoCast: true, bots: [] },
+          ai: {
+            count: BOTS,
+            autoMove: true,
+            autoAttack: true,
+            autoCast: true,
+            // `autoBuy` is **on by default in a real match** (`PregameConfig`'s
+            // `DEFAULT_BOT_BEHAVIOUR`) and this script never set it, so every
+            // teamfight it has ever measured was fought by naked champions.
+            // A built champion is a different load: six item passives each with
+            // their own buff, art and periodic area query, times the roster.
+            // Set `MOBA2D_BOT_BUY=0` to measure the old naked fight.
+            autoBuy: process.env.MOBA2D_BOT_BUY !== '0',
+            bots: [],
+          },
           rules: { manaFree: true },
         },
       ]
@@ -198,6 +234,18 @@ await guard(async () => {
       let ticks = 0;
       let drawMs = 0;
       let updateMs = 0;
+      /**
+       * Every frame's wall-clock gap, because **an average cannot see a hitch**
+       * and a hitch is what a player reports.
+       *
+       * This script computed `frames * 1000 / wall` and nothing else, so a run
+       * that held 60 on average while dropping to 15 four times a second read
+       * as perfectly healthy — which is exactly the shape of the complaint it
+       * was first pointed at. `worstFps` and `p95Fps` below are the numbers to
+       * argue with; the average is the one that was always fine.
+       */
+      const gaps = [];
+      let lastFrameAt = 0;
       const gameProto = Object.getPrototypeOf(game);
       const realDraw = gameProto.draw;
       const realTick = gameProto.fixedUpdate;
@@ -206,6 +254,11 @@ await guard(async () => {
         const out = realDraw.apply(this, args);
         frames++;
         drawMs += performance.now() - startedAt;
+        // The gap between presented frames, not the cost of this one: a stall
+        // in anything else sharing the thread is invisible to `drawMs` and is
+        // felt.
+        if (lastFrameAt > 0) gaps.push(startedAt - lastFrameAt);
+        lastFrameAt = startedAt;
         return out;
       };
       gameProto.fixedUpdate = function (...args) {
@@ -351,6 +404,8 @@ await guard(async () => {
       ticks = 0;
       drawMs = 0;
       updateMs = 0;
+      gaps.length = 0;
+      lastFrameAt = 0;
       for (const bucket of buckets.values()) {
         bucket.calls = 0;
         bucket.total = 0;
@@ -408,9 +463,22 @@ await guard(async () => {
         }))
         .sort((a, b) => b.selfMs - a.selfMs);
 
+      const sortedGaps = [...gaps].sort((a, b) => a - b);
+      const gapAt = share =>
+        sortedGaps.length === 0
+          ? 0
+          : sortedGaps[Math.min(sortedGaps.length - 1, Math.floor(sortedGaps.length * share))];
+      const asFps = gap => (gap > 0 ? Number((1000 / gap).toFixed(1)) : 0);
+
       return {
         windowMs: Number(wall.toFixed(0)),
         fps: Number(((frames * 1000) / wall).toFixed(1)),
+        // The three a player actually feels. `worstFps` is one frame and is
+        // noisy on its own; `p95Fps` is the one to hold a line on.
+        p95Fps: asFps(gapAt(0.95)),
+        p99Fps: asFps(gapAt(0.99)),
+        worstFps: asFps(sortedGaps[sortedGaps.length - 1] ?? 0),
+        longFrames: gaps.filter(gap => gap > 33).length,
         tickRate: Number(((ticks * 1000) / wall).toFixed(1)),
         drawMsPerFrame: Number((drawMs / Math.max(1, frames)).toFixed(2)),
         updateMsPerTick: Number((updateMs / Math.max(1, ticks)).toFixed(2)),
@@ -430,6 +498,10 @@ await guard(async () => {
   console.log(
     `fps ${result.fps}  tick ${result.tickRate}  draw ${result.drawMsPerFrame}ms/frame  ` +
       `update ${result.updateMsPerTick}ms/tick  objects ${result.objects}`
+  );
+  console.log(
+    `p95 ${result.p95Fps}fps  p99 ${result.p99Fps}fps  worst ${result.worstFps}fps  ` +
+      `frames over 33ms: ${result.longFrames}/${result.frames}`
   );
   console.log(
     '\n' +
