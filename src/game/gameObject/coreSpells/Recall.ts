@@ -109,17 +109,6 @@ function __buildRecall(api: ContentApi) {
     coolDown = RECALL_COOLDOWN_MS;
     manaCost = 0;
 
-    /**
-     * The one cast in the game that does not give a hidden champion away.
-     *
-     * League's stealths end on an attack or an ability; recall is neither, and
-     * recalling out of stealth is the whole reason a stealthed champion can
-     * leave a lane alive. `combat/StealthBreak.ts` states the rule this opts
-     * out of — and note the channel already breaks on damage, so this is not
-     * an escape hatch: it is invisible until somebody finds it.
-     */
-    breaksStealth = false;
-
     _channelElapsedMs = 0;
     /** Re-read every frame, so regeneration ticking upward never arms the watch. */
     _healthAtCast = 0;

@@ -9,12 +9,12 @@ import {
   interruptsSuspended,
   isInterruptibleState,
   ownerInterruptReason,
+  resolveInterrupts,
   snapshotOwnerMovement,
   type OwnerMovementSnapshot,
 } from '@/game/spell/runtime/CancelPolicy';
 import type { TargetingRequest } from '@/game/spell/targeting/TargetResolver';
 import { beginAttribution, endAttribution } from '@/game/combat/DamageAttribution';
-import { NO_STEALTH, breakStealth, stealthsOn } from '@/game/combat/StealthBreak';
 import { isNetClient } from '@/game/net/netRole';
 import { hasteCooldownMultiplier } from '@/game/gameObject/Stats';
 import type {
@@ -98,17 +98,6 @@ export default class Spell {
    * must not draw from both stats at once.
    */
   damageScalesWithAbilityPower = true;
-
-  /**
-   * Whether casting this gives a hidden caster away.
-   *
-   * True for every ability, which is League's own rule. The opt-out exists
-   * for the actions that are not attacks made out of stealth — recall is the
-   * one core ships, and a champion recalling out of a bush that lit up the
-   * moment they pressed B would be a different game. See
-   * `combat/StealthBreak.ts`.
-   */
-  breaksStealth = true;
 
   /**
    * What this ability *does*, for the bot brain — see `src/game/ai/SpellRole.ts`.
@@ -327,6 +316,7 @@ export default class Spell {
   update(): void {
     this.onUpdate();
     this.observeInterrupts();
+    this.holdStillWhileCasting();
     this.attributed(() => this.runtime.update(deltaTime));
     if (this.owner.isDead) {
       this.spellVfx?.dispose();
@@ -420,13 +410,25 @@ export default class Spell {
   press(context: CastContext): boolean {
     this._castContext = snapshotContext(context);
     this.game.eventManager.emit(EventType.ON_PRE_CAST_SPELL, this);
-    // Read before the cast runs, and used after it is accepted: the ability
-    // that *grants* a stealth is itself a cast, so the snapshot is what stops
-    // a vanishing ability being undone by the press that cast it. See
-    // `StealthBreak.ts`.
-    const hiddenBefore = this.breaksStealth ? stealthsOn(this.owner) : NO_STEALTH;
     const accepted = this.attributed(() => this.runtime.press(this._castContext!));
     if (accepted) {
+      // **A cast that movement ends must first end the movement.**
+      //
+      // `CancelPolicy` watches `movementRevision`, which counts move *orders* —
+      // so a champion already walking when the channel starts issues no new
+      // order, the watcher sees nothing, and she strolls across the lane firing
+      // an ultimate she is supposed to be standing still for. Reported exactly
+      // that way. Planting her here is what makes the rule the form already
+      // declares (`SpellForm.CHANNELED`) reachable at all: from this frame on,
+      // any move order is a *change* and cancels the channel.
+      //
+      // `stopMovement()` deliberately does not bump the revision (it writes the
+      // destination directly), so this cannot cancel the cast it just started.
+      // Before `snapshotOwner`, so the snapshot records the stopped feet.
+      // Optional at both hops, the same way the attack-order clear below is:
+      // a spell is constructed against a bare stat block in more than one
+      // fixture, and a cast must not throw because its owner has no feet.
+      if (resolveInterrupts(this.activeCastSpec.interrupts).move) this.owner?.stopMovement?.();
       this.snapshotOwner();
       // Casting is the third way to cancel a standing attack order, beside a
       // move order and crowd control: committing to an ability is a decision to
@@ -445,13 +447,14 @@ export default class Spell {
       // names no unit is exactly the one that must stay quiet — firing one out
       // of a brush is a real thing to do, in League and here. See
       // `combat/AttackReveal.ts`.
+      //
+      // The fog is the whole of what a cast gives away. **It does not end a
+      // stealth**, and there was a line here that did: dropping a box or a
+      // decoy announces nothing and damages nobody, so a jester who blinked
+      // away was given up by the two abilities the blink is cast to set up.
+      // What ends a stealth is a hit landing, on either end of it, from
+      // `AttackableUnit.takeDamage` — see `combat/StealthBreak.ts`.
       if (this._castContext?.target) this.owner?.revealForAttack();
-
-      // Stealth is broader than the reveal above: a skillshot fired out of a
-      // brush keeps its caster hidden from the fog, but a champion who casts
-      // anything at all stops being *invisible*. Only what was already
-      // standing, so a stealth this very cast hung survives it.
-      if (hiddenBefore.length > 0) breakStealth(this.owner, hiddenBefore);
     }
     this.syncVfxPhase();
     return accepted;
@@ -939,6 +942,26 @@ export default class Spell {
    * those the spell actually dies of is the form's decision, made in
    * `SpellRuntime.canInterrupt` — see `CancelPolicy`.
    */
+  /**
+   * **A cast time is a root.** That is what a cast time *is* in this genre, and
+   * it was not one here: `castTimeMs` only delayed the release, so a champion
+   * with a 340ms wind-up walked through the whole of it and the ability came
+   * out of somebody who never broke stride. Nothing on the body said a cast was
+   * happening, which is the other half of "chiêu xả ra mà tướng vẫn đi".
+   *
+   * Every frame rather than once, exactly as `BasicAttackController` holds an
+   * attacker through a swing's wind-up: a move order arriving mid-cast has to
+   * be refused too, not just the one that was standing when it began.
+   *
+   * Only `CASTING` — a charge (`CHARGING`) is aimed while walking on purpose,
+   * and a channel is held by `press` above plus its own move interrupt.
+   */
+  private holdStillWhileCasting(): void {
+    if (this.runtime.state !== 'CASTING') return;
+    if (this.owner?.isDead) return;
+    this.owner?.stopMovement?.();
+  }
+
   private observeInterrupts(): void {
     if (!isInterruptibleState(this.runtime.state)) return;
     if (interruptsSuspended(this.owner, this.activeCastSpec.suspendedBy)) return;

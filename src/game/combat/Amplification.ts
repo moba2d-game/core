@@ -54,7 +54,53 @@ export interface AmplificationSource {
     /** `baseValue` as well as `value`, because only the *bonus* half scales an ability. */
     attackDamage?: { value: number; baseValue: number };
   };
+  /**
+   * Whose build this unit's *ability* damage reads, when it is not its own.
+   *
+   * Only a summon sets it (`Pet`), and the reason is the bug it fixes. A jester
+   * box shoots for a flat 7 and its tooltip promises `7 (+n)`, because the
+   * tooltip is rescaled by the champion who owns the ability while the bolt is
+   * dealt by the box — a body with an empty inventory, no ability power, and
+   * therefore a multiplier of exactly 1. Two hundred percent ability power
+   * bought the caster nothing at all on that ability, silently, with the
+   * tooltip still promising it.
+   *
+   * **Not solved by handing `takeDamage` the summoner as the attacker.** The
+   * attacker is also who the victim remembers: a turret's ally-protection
+   * aggro, `lastCombatMs`, the assist ledger, whose penetration applies. A
+   * champion hiding two screens away whose trap shot a minion would be "in a
+   * fight" and answered by a tower nobody walked up to. Who *dealt* the hit and
+   * whose *build* it reads are two questions, so this is a second field rather
+   * than a substitution.
+   */
+  abilityDamageOwner?: AmplificationSource | null;
 }
+
+/**
+ * How deep a summoner chain is followed before it is judged a cycle.
+ *
+ * Nothing in the game builds one — the boxes a decoy clone leaves behind name
+ * the champion, not the clone — but a pet summoning a pet is a pack's to write
+ * and a cycle here is an infinite loop inside the damage funnel.
+ */
+const MAX_OWNER_DEPTH = 4;
+
+/**
+ * The unit whose stats an ability read off, following `abilityDamageOwner`.
+ *
+ * Applied inside both multipliers rather than at the call sites so that all
+ * three amplification funnels — `takeDamage`, `AttackableUnit.takeHeal` and
+ * `buffs/Shield` — get it without knowing it exists.
+ */
+const buildOf = (source: AmplificationSource | undefined): AmplificationSource | undefined => {
+  let unit = source;
+  for (let depth = 0; depth < MAX_OWNER_DEPTH; depth++) {
+    const owner = unit?.abilityDamageOwner;
+    if (!owner || owner === unit) return unit;
+    unit = owner;
+  }
+  return unit;
+};
 
 /**
  * What one point of bonus attack damage adds to a physical ability, and the
@@ -89,7 +135,7 @@ export const ABILITY_SCALING_PER_ATTACK_DAMAGE = 0.05;
  * them. A missing or non-finite stat is no amplification, never `NaN`.
  */
 export function abilityPowerMultiplier(source: AmplificationSource | undefined): number {
-  const value = source?.stats?.abilityPower?.value;
+  const value = buildOf(source)?.stats?.abilityPower?.value;
   if (!Number.isFinite(value)) return 1;
   const multiplier = 1 + (value as number);
   return multiplier > 0 ? multiplier : 0;
@@ -109,7 +155,7 @@ export function abilityPowerMultiplier(source: AmplificationSource | undefined):
  * damage shred deep enough would otherwise make casting on the victim heal them.
  */
 export function physicalPowerMultiplier(source: AmplificationSource | undefined): number {
-  const stat = source?.stats?.attackDamage;
+  const stat = buildOf(source)?.stats?.attackDamage;
   if (!stat || !Number.isFinite(stat.value) || !Number.isFinite(stat.baseValue)) return 1;
   const bonus = stat.value - stat.baseValue;
   const multiplier = 1 + bonus * ABILITY_SCALING_PER_ATTACK_DAMAGE;

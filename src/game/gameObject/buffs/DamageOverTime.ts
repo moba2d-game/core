@@ -93,6 +93,27 @@ export default class DamageOverTime extends Buff {
   damageType: DamageType = 'MAGIC';
   tickInterval = 500;
 
+  /**
+   * **A tick of this reveals nobody**, and it is the only thing in the engine
+   * that says so. Core's rule is that a hit ends a stealth on both ends of it
+   * (`combat/StealthBreak.ts`); a poison is the case that rule gets wrong, at
+   * both ends and for the same reason — *nobody is acting*. The cast that
+   * applied this returned seconds ago and the clock has been running by itself
+   * ever since.
+   *
+   *   - **The source.** A poisoner who vanishes while their own poison is still
+   *     ticking would be given away by it, every half second, which is a kit
+   *     that cannot use its own stealth at all. This is the ability the carve-out
+   *     was asked for.
+   *   - **The victim.** Otherwise a single burn is a hard counter to *every*
+   *     stealth in the game: nobody hiding could stay hidden through one, and
+   *     a champion carrying a burn would deny the mechanic outright.
+   *
+   * What still reveals is everything somebody does about it: applying the
+   * poison in the first place, swinging, and every other hit either end takes.
+   */
+  revealsStealth = false;
+
   flameColor: [number, number, number] = [255, 230, 120];
   emberColor: [number, number, number] = [210, 35, 10];
 

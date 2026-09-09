@@ -597,6 +597,28 @@ export async function updatePack(manifestUrl: string): Promise<boolean> {
 }
 
 /**
+ * Updates several packs, and **one at a time on purpose**.
+ *
+ * `updatePack` above is a read-modify-write of the installed list: it reads
+ * every record, replaces one, and writes them all back. Two of those in flight
+ * together both read the same snapshot and the second write puts back the
+ * first's stale record — a pack that reported success and did not move, which
+ * is the worst possible outcome for an update button. So this is a `for` loop
+ * with an `await` in it and not `Promise.all`, and that is not a style
+ * preference.
+ *
+ * Answers how many actually moved, so the caller can tell "nothing to do" from
+ * "the network refused" and reload only when something changed.
+ */
+export async function updatePacks(manifestUrls: readonly string[]): Promise<number> {
+  let updated = 0;
+  for (const manifestUrl of manifestUrls) {
+    if (await updatePack(manifestUrl)) updated += 1;
+  }
+  return updated;
+}
+
+/**
  * Installs one pack into the live registry, without a reload — spec §5.2.
  *
  * Takes the manifest rather than fetching it, because the caller has already

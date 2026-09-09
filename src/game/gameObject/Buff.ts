@@ -63,6 +63,20 @@ export default class Buff {
    */
   readonly damageScalesWithAbilityPower: boolean =
     currentAttribution()?.damageScalesWithAbilityPower === true;
+
+  /**
+   * Whether a hit this buff deals gives a hidden unit away — see
+   * `combat/StealthBreak.ts` for the rule and `combat/DamageAttribution.ts`'s
+   * `revealsStealth` for how the ambient carries it.
+   *
+   * True here, because most buffs that deal damage are somebody *doing*
+   * something: an aura burning everyone standing next to its wearer, a
+   * retaliation, a mark being detonated. The one that is not is a poison or a
+   * burn already standing on its victim, which `buffs/DamageOverTime` turns
+   * off — a buff of that shape written by hand rather than on top of that class
+   * should turn it off too.
+   */
+  revealsStealth = true;
   description: string | null = null;
   image: AssetHandle | null | undefined = null;
 

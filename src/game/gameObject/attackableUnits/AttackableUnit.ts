@@ -34,11 +34,13 @@ import type Buff from '@/game/gameObject/Buff';
 import type { BuffConstructor, BuffStackId } from '@/game/gameObject/Buff';
 import {
   abilityPowerScales,
+  attributionRevealsStealth,
   beginAttribution,
   currentAttributionName,
   endAttribution,
 } from '@/game/combat/DamageAttribution';
 import { amplifiedAbilityDamage, type AmplificationSource } from '@/game/combat/Amplification';
+import { breakStealthOn } from '@/game/combat/StealthBreak';
 import { isNetClient } from '@/game/net/netRole';
 import { resolveVisionTuning } from '@/game/config/mapTuning';
 
@@ -296,6 +298,32 @@ export default class AttackableUnit extends GameObject {
    */
   get killCreditedTo(): AttackableUnit {
     return this;
+  }
+
+  /**
+   * Whose **build** this unit's ability damage reads, when it is not its own.
+   *
+   * The third question in the same family as `killCredit` and `killCreditedTo`
+   * above, and the one a summon gets wrong in the quietest way: a body spawned
+   * by an ability owns no items, so every hit it deals is multiplied by exactly
+   * 1 while the tooltip that sold the ability is rescaled by the champion who
+   * cast it. `combat/Amplification.ts` follows this instead of the stat block
+   * in front of it; `undefined` — the base answer, and the right one for
+   * everything that fights on its own account — means "read my own".
+   *
+   * Two shapes need it and they do not share a class, which is why it is
+   * declared here rather than on `Pet`: a summon (`Pet` overrides it), and a
+   * **mimic** — a pack's shadow clone that re-casts its owner's abilities and
+   * extends `Champion` directly. The second is exactly the kind of body an
+   * `instanceof Pet` check would miss, so the name has to be reachable from a
+   * pack.
+   *
+   * Deliberately *not* the same question as "who dealt this hit". The attacker
+   * is who the victim remembers — turret aggro, `lastCombatMs`, the assist
+   * ledger — and a summon must keep answering that for itself.
+   */
+  get abilityDamageOwner(): AttackableUnit | undefined {
+    return undefined;
   }
 
   /**
@@ -1036,6 +1064,25 @@ export default class AttackableUnit extends GameObject {
     // absorb reintroduces a fraction.
     damage = Math.round(damage);
     if (damage <= 0) return;
+
+    // **A hit ends a stealth on both ends of it.** Dealing damage is being
+    // found and taking damage is being found, and that is the whole rule —
+    // casting an ability no longer gives a hidden champion away. See
+    // `combat/StealthBreak.ts`.
+    //
+    // Here rather than after mitigation, and for the same reason the aggro
+    // below reads `swung` rather than what got through: a hit an armour stack
+    // or a shield ate was still a hit, and being found is not something a
+    // bubble can absorb. Below the `damage <= 0` guard, so a caller asking for
+    // nothing reveals nobody.
+    //
+    // The exception is a hit **nobody is dealing right now** — a poison ticking
+    // on its own clock, which is neither end of it acting. The ambient answers
+    // that, because the hit cannot: `buffs/DamageOverTime` is what turns it off.
+    if (attributionRevealsStealth()) {
+      breakStealthOn(attacker);
+      breakStealthOn(this);
+    }
 
     // **Resistance first, shields second, and the order is the rule.** Armour
     // is a property of the body being hit, so it makes the hit *smaller*; a

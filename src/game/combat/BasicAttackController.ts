@@ -342,8 +342,10 @@ export default class BasicAttackController {
     // arrow came from. See `combat/AttackReveal.ts`.
     this.owner.revealForAttack();
     // And the harder half of the same fact: a hidden attacker stops being
-    // hidden. League ends every stealth a champion can act out of on the
-    // action, not on the hit — see `combat/StealthBreak.ts`.
+    // hidden. This is the one stealth seam that is not the damage funnel, and
+    // it is here for the same reason the reveal above is — a swing is a
+    // committed hit, and waiting for the bolt to land would hide the attacker
+    // through the whole flight. See `combat/StealthBreak.ts`.
     breakStealthOn(this.owner);
 
     this.owner.game?.eventManager?.emit(EventType.ON_ATTACK, this.owner);

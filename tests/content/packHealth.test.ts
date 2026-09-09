@@ -13,6 +13,7 @@ import {
   notePackProblem,
   packHealthDismissed,
   packProblems,
+  updatablePackProblems,
   resetPackHealthForTests,
 } from '@/content/packHealth';
 
@@ -105,5 +106,67 @@ describe('clearPackProblem', () => {
     });
     clearPackProblem(RIOT.manifestUrl);
     expect(packProblems.value.map(p => p.id)).toEqual(['other']);
+  });
+});
+
+/**
+ * **One press has to settle every pack that has an update waiting.**
+ *
+ * The menu read `packProblems[0]` and updated that one, then reloaded — so a
+ * player with three stale packs answered the same notice three times, watched
+ * the page reload between each, and only learned there was another one after
+ * the reload. Nothing was wrong with this queue; the screen was reading one
+ * entry out of it. `updatablePackProblems` is the list it should have read.
+ */
+describe('every pack a single press should settle', () => {
+  beforeEach(() => resetPackHealthForTests());
+
+  it('is every problem whose fix is fetching the newest build', () => {
+    notePackProblem({ ...RIOT, kind: 'update' });
+    notePackProblem({ id: 'dota', name: 'Dota', manifestUrl: 'https://d/m.json', kind: 'update' });
+    notePackProblem({
+      id: 'naruto',
+      name: 'Naruto',
+      manifestUrl: 'https://n/m.json',
+      kind: 'broken',
+    });
+
+    expect(updatablePackProblems().map(problem => problem.id)).toEqual([
+      RIOT.id,
+      'dota',
+      'naruto',
+    ]);
+  });
+
+  /** A dev pack has no pin to replace: `updatePack` would put one back. */
+  it('leaves a dev rebuild out — its fix is a reload, not a fetch', () => {
+    notePackProblem({ ...RIOT, kind: 'update' });
+    notePackProblem({
+      id: 'mine',
+      name: 'Mine',
+      manifestUrl: 'http://localhost:5174/manifest.json',
+      kind: 'dev-changed',
+    });
+
+    expect(updatablePackProblems().map(problem => problem.id)).toEqual([RIOT.id]);
+  });
+
+  /**
+   * The caller `await`s its way down this list while every success calls
+   * `clearPackProblem`, which rewrites `packProblems` underneath it.
+   */
+  it('hands back a copy, so clearing one entry cannot shorten a walk in progress', () => {
+    notePackProblem({ ...RIOT, kind: 'update' });
+    notePackProblem({ id: 'dota', name: 'Dota', manifestUrl: 'https://d/m.json', kind: 'update' });
+
+    const targets = updatablePackProblems();
+    clearPackProblem(RIOT.manifestUrl);
+
+    expect(targets).toHaveLength(2);
+    expect(packProblems.value).toHaveLength(1);
+  });
+
+  it('is empty when nothing is wrong', () => {
+    expect(updatablePackProblems()).toEqual([]);
   });
 });

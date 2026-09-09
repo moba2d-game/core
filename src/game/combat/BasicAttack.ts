@@ -1,6 +1,11 @@
 import EventType from '@/game/enums/EventType';
 import { applyOnHitEffects } from '@/game/combat/OnHit';
-import { BASIC_ATTACK_SOURCE } from '@/game/combat/DamageAttribution';
+import {
+  BASIC_ATTACK_ATTRIBUTION,
+  BASIC_ATTACK_SOURCE,
+  beginAttribution,
+  endAttribution,
+} from '@/game/combat/DamageAttribution';
 import { drawMeleeStrike, drawMeleeWindup } from '@/game/vfx/MeleeSwing';
 import MissileSpellObject, { STALLED_CHASE_MS } from '@/game/gameObject/MissileSpellObject';
 import SpellObject from '@/game/gameObject/SpellObject';
@@ -134,6 +139,12 @@ export function stillInReach(
  * The one place a basic attack turns into damage. Both delivery objects funnel
  * through here so the validity rules and the on-hit event can never drift apart.
  * Returns whether the attack actually landed.
+ *
+ * The whole of it runs under `BASIC_ATTACK_ATTRIBUTION` — a swing is a swing
+ * whatever built the object that delivered it, rather than whatever cast
+ * happened to be ambient when the controller launched it. See that constant.
+ * Anything that brackets an attribution of its own from in here (a buff
+ * reacting to the hit) still wins: `beginAttribution` nests.
  */
 export function landBasicAttack(
   attacker: AttackableUnit,
@@ -143,6 +154,21 @@ export function landBasicAttack(
 ): boolean {
   if (attacker.isDead || !canBeHit(victim)) return false;
 
+  const previousAttribution = beginAttribution(BASIC_ATTACK_ATTRIBUTION);
+  try {
+    return landSwing(attacker, victim, damage, ranged);
+  } finally {
+    endAttribution(previousAttribution);
+  }
+}
+
+/** The swing itself, once the validity rules above have let it through. */
+function landSwing(
+  attacker: AttackableUnit,
+  victim: AttackableUnit,
+  damage: number,
+  ranged: boolean
+): boolean {
   // On-hit first, then the crit multiplier over the total — the order League
   // uses, and the one that makes stacking the two feel worth it. Both stats
   // sit at 0 by default, so a unit nobody has buffed swings for exactly what

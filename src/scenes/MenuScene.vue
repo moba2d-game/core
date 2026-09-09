@@ -67,7 +67,7 @@ import {
   packInstallFailures,
   retryPackInstall,
 } from './packBanner';
-import { packHealthDismissed, packProblems } from '@/content/packHealth';
+import { packHealthDismissed, packProblems, updatablePackProblems } from '@/content/packHealth';
 import { markPackNudgeSeen, packNudgeSeen } from './packNudge';
 
 /**
@@ -90,12 +90,36 @@ const packProblem = computed(() => packProblems.value[0] ?? null);
 const updatingPack = ref(false);
 const packUpdateFailed = ref(false);
 
+/**
+ * Every pack one press of Cập nhật settles — see
+ * `content/packHealth.ts`'s `updatablePackProblems`.
+ *
+ * The banner read `packProblems[0]` and nothing else, so a player with three
+ * stale packs pressed Cập nhật, watched the page reload, and was met by the
+ * next notice: three answers and three reloads to do one thing, and no way to
+ * know how many were left. Empty while the head problem is a dev rebuild,
+ * whose fix is a reload rather than a fetch.
+ */
+const pendingUpdates = computed(() =>
+  packProblem.value?.kind === 'dev-changed' ? [] : updatablePackProblems()
+);
+
 const packProblemText = computed(() => {
   const problem = packProblem.value;
   if (!problem) return '';
   const name = problem.name;
   if (problem.kind === 'dev-changed')
     return `Pack "${name}" vừa được build lại — tải lại trang để chạy bản mới.`;
+
+  // More than one waiting: say how many and name them, because the count is
+  // the fact the old banner hid. The names are two or three short strings —
+  // this game ships three packs — so a list reads better than a number alone.
+  const waiting = pendingUpdates.value;
+  if (waiting.length > 1) {
+    const names = waiting.map(entry => entry.name).join(', ');
+    return `${waiting.length} pack đã có bản mới: ${names}.`;
+  }
+
   if (problem.kind === 'update') return `Pack "${name}" đã có bản mới.`;
   const missing = problem.missingSpells;
   return missing
@@ -114,15 +138,26 @@ async function updateProblemPack(): Promise<void> {
     location.reload();
     return;
   }
+  // **All of them, not the one on screen.** The reload below costs the player
+  // the same whether it settles one pack or three, so doing them together is
+  // the difference between one answer and three.
+  const targets: string[] = [];
+  for (const entry of pendingUpdates.value) targets.push(entry.manifestUrl);
+  if (targets.length === 0) return;
+
   updatingPack.value = true;
   packUpdateFailed.value = false;
   try {
-    const { updatePack } = await import('@/content/runtimePacks');
-    if (await updatePack(problem.manifestUrl)) {
+    const { updatePacks } = await import('@/content/runtimePacks');
+    if ((await updatePacks(targets)) > 0) {
       // A reload, not a live swap. The old build's modules have already been
       // evaluated in this page and ES modules evaluate once, so carrying on
       // would leave the previous classes running behind the new manifest —
       // the exact mismatch the update exists to end.
+      //
+      // Reloaded on *any* success rather than only on all of them: a pack the
+      // network refused is still stale, and it will say so again after the
+      // reload rather than holding the ones that worked hostage.
       location.reload();
       return;
     }
@@ -431,7 +466,9 @@ async function pressInstall() {
             ? 'Tải lại'
             : updatingPack
               ? 'Đang cập nhật…'
-              : 'Cập nhật'
+              : pendingUpdates.length > 1
+                ? `Cập nhật cả ${pendingUpdates.length}`
+                : 'Cập nhật'
         }}
       </button>
       <button id="pack-update-dismiss" type="button" class="ghost" @click="dismissPackProblem"

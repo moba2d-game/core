@@ -23,6 +23,9 @@ import Monster from '../../../src/game/gameObject/attackableUnits/Monster';
 import Turret from '../../../src/game/gameObject/structures/Turret';
 import Invisible from '../../../src/game/gameObject/buffs/Invisible';
 import TrueSight from '../../../src/game/gameObject/buffs/TrueSight';
+import Untargetable from '../../../src/game/gameObject/buffs/Untargetable';
+import DamageOverTime from '../../../src/game/gameObject/buffs/DamageOverTime';
+import StatusFlags from '../../../src/game/enums/StatusFlags';
 import TeamId from '../../../src/game/enums/TeamId';
 import { Lane, getLaneWaypoints } from '../../../src/game/lanes';
 import Spell from '../../../src/game/gameObject/Spell';
@@ -185,16 +188,21 @@ describe('a target that vanishes mid-fight is let go', () => {
 });
 
 /**
- * **Acting gives you away** — the other half of stealth, and the half this
+ * **A hit gives you away** — the other half of stealth, and the half this
  * engine did not have.
  *
  * Everything above is the *observer* side: nothing acquires what it cannot
  * see. With no rule on the acting side, a champion who vanished stayed
  * untargetable while standing in a fight and swinging: not a repositioning
- * tool, a permanent immunity to being answered. `combat/StealthBreak.ts` has
- * the rule and the two seams it hangs on.
+ * tool, a permanent immunity to being answered.
+ *
+ * The rule used to be League's — any cast reveals you — and it was replaced
+ * because of what it did to the abilities that announce nothing: a jester who
+ * blinked away was given up by the box and the decoy the blink is cast to set
+ * up. `combat/StealthBreak.ts` has the rule that replaced it and the one seam
+ * that is not the damage funnel.
  */
-describe('acting gives a hidden champion away', () => {
+describe('a hit gives a hidden champion away', () => {
   /** A cast with nothing in it, so the press itself is what is under test. */
   class Poke extends Spell {
     name = 'Poke';
@@ -260,21 +268,40 @@ describe('acting gives a hidden champion away', () => {
     expect(stillHidden(champion)).toBe(false);
   });
 
-  it('a cast ends it', () => {
+  it('damage the hidden champion deals ends it', () => {
     const champion = hidden('solo');
-    indexObjects(game, [champion]);
+    const victim = new Champion({ game, teamId: 'other', position: createVector(120, 0) });
+    indexObjects(game, [champion, victim]);
 
-    expect(pressSpell(new Poke(champion))).toBe(true);
+    victim.takeDamage(20, champion, 'MAGIC');
+
+    expect(stillHidden(champion)).toBe(false);
+  });
+
+  it('damage the hidden champion takes ends it too', () => {
+    const champion = hidden('solo');
+    const enemy = new Champion({ game, teamId: 'other', position: createVector(120, 0) });
+    indexObjects(game, [champion, enemy]);
+
+    champion.takeDamage(20, enemy, 'MAGIC');
 
     expect(stillHidden(champion)).toBe(false);
   });
 
   /**
-   * The one case a naive cast seam gets wrong, and it is the common one: the
-   * ability granting the stealth is itself a cast, so ending every stealth on
-   * every press would undo the vanishing with the press that cast it. The
-   * snapshot in `Spell.press` is what makes this pass.
+   * The whole reason the rule moved off the cast seam: **dropping a box is not
+   * being found**. Reported against the jester, whose blink is cast to set up
+   * exactly the two abilities that were giving it away.
    */
+  it('a cast that damages nobody leaves it alone', () => {
+    const champion = hidden('solo');
+    indexObjects(game, [champion]);
+
+    expect(pressSpell(new Poke(champion))).toBe(true);
+
+    expect(stillHidden(champion)).toBe(true);
+  });
+
   it('the cast that grants the stealth does not undo its own work', () => {
     const champion = new Champion({ game, teamId: 'solo' });
     indexObjects(game, [champion]);
@@ -284,45 +311,79 @@ describe('acting gives a hidden champion away', () => {
     expect(stillHidden(champion)).toBe(true);
   });
 
-  it('a refused cast leaves it alone', () => {
+  /** A caller asking for nothing is not a hit, on either end of it. */
+  it('a zero-damage call reveals nobody', () => {
     const champion = hidden('solo');
-    indexObjects(game, [champion]);
+    const victim = new Champion({ game, teamId: 'other', position: createVector(120, 0) });
+    indexObjects(game, [champion, victim]);
+    vanish(victim);
 
-    const poke = new Poke(champion);
-    poke.lockoutMs = 5_000;
-    expect(pressSpell(poke)).toBe(true);
-    vanish(champion);
-
-    // Into the cooldown: an AI champion does this several times a second, and
-    // a key pressed into a lockout is not an action.
-    expect(pressSpell(poke)).toBe(false);
-    expect(stillHidden(champion)).toBe(true);
-  });
-
-  it('an ability that opts out leaves it alone — the shape recall uses', () => {
-    const champion = hidden('solo');
-    indexObjects(game, [champion]);
-
-    const quiet = new Poke(champion);
-    quiet.breaksStealth = false;
-    expect(pressSpell(quiet)).toBe(true);
+    victim.takeDamage(0, champion, 'MAGIC');
 
     expect(stillHidden(champion)).toBe(true);
+    expect(stillHidden(victim)).toBe(true);
   });
 
   /**
-   * **Damage does not break it**, deliberately: a poison applied before the
-   * champion vanished goes on ticking, and every tick is damage the hidden
-   * unit dealt. Hanging the rule on `onDamageDealt` — the obvious place —
-   * would leave a damage-over-time kit unable to use its own stealth at all.
+   * **A poison ticking is nobody acting**, so it reveals neither end of itself:
+   * not the poisoner who applied it and has since vanished, and not the victim,
+   * who would otherwise be unable to use any stealth at all while burning.
+   *
+   * Driven through `updateBuffs()` rather than by calling `takeDamage`, because
+   * the carve-out rides the attribution the buff's own tick is bracketed in —
+   * a hand-rolled call would be testing a path the game never takes.
    */
-  it('damage the hidden champion is still dealing does not break it', () => {
+  it('a poison tick reveals neither the poisoner nor the burning champion', () => {
+    const poisoner = hidden('solo');
+    const victim = new Champion({ game, teamId: 'other', position: createVector(120, 0) });
+    indexObjects(game, [poisoner, victim]);
+    vanish(victim);
+
+    const poison = new DamageOverTime(5_000, poisoner, victim);
+    poison.damagePerTick = 10;
+    poison.tickInterval = 100;
+    victim.addBuff(poison);
+
+    const before = victim.stats.health.value;
+    vi.stubGlobal('deltaTime', 200);
+    victim.updateBuffs();
+    vi.stubGlobal('deltaTime', 16);
+
+    expect(victim.stats.health.value, 'the poison never ticked').toBeLessThan(before);
+    expect(stillHidden(poisoner)).toBe(true);
+    expect(stillHidden(victim)).toBe(true);
+  });
+
+  /** …but applying one is an act, and so is anything else either of them does. */
+  it('still reveals when the same damage is dealt as an ordinary hit', () => {
     const champion = hidden('solo');
     const victim = new Champion({ game, teamId: 'other', position: createVector(120, 0) });
     indexObjects(game, [champion, victim]);
 
-    victim.takeDamage(20, champion, 'MAGIC');
+    victim.takeDamage(10, champion, 'MAGIC');
+
+    expect(stillHidden(champion)).toBe(false);
+  });
+
+  /**
+   * The exemption in `StealthBreak.breakableByDamage`, in the shape it exists
+   * for: one buff carrying a stealth *and* untargetability, which is a champion
+   * who is not on the map rather than one who is hiding on it. A burn applied
+   * before the leap is enough to reach `takeDamage`, and ending the buff would
+   * take the action lock with it and drop him out of his own ultimate.
+   */
+  it('leaves a stealth that also makes its owner untargetable alone', () => {
+    const champion = new Champion({ game, teamId: 'solo' });
+    indexObjects(game, [champion]);
+    const skyward = new Untargetable(5_000, champion, champion);
+    skyward.statusFlagsToEnable = StatusFlags.Stealthed | StatusFlags.Stunned;
+    champion.addBuff(skyward);
+    champion.updateBuffs();
+    expect(champion.isStealthed).toBe(true);
+
+    champion.takeDamage(20, undefined, 'MAGIC');
 
     expect(stillHidden(champion)).toBe(true);
+    expect(champion.targetable).toBe(false);
   });
 });

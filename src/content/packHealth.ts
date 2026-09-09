@@ -110,6 +110,33 @@ export function notePackProblem(problem: PackProblem): void {
 export const hasPackProblems = (): boolean =>
   packProblems.value.length > 0 && !packHealthDismissed.value;
 
+/**
+ * Every problem whose fix is **fetching the newest build**, which is the list
+ * one press of Cập nhật should settle.
+ *
+ * The menu used to read `packProblems[0]` and update that one pack, then
+ * reload — so a player with three stale packs answered the same notice three
+ * times, watching the page reload between each, and only found out there was
+ * another one after the reload. Reported exactly that way. Nothing was wrong
+ * with the queue; the screen was reading one entry out of it.
+ *
+ * `dev-changed` is excluded and that is the whole reason this is a function
+ * rather than a length: a dev pack has no pin to replace (`devPack.ts`), and
+ * `updatePack` would put back the very pin boot refused to write. Its fix is a
+ * reload, which the menu still offers on its own.
+ *
+ * A plain loop rather than `.filter`, per CLAUDE.md, and it hands back a copy:
+ * the caller is about to `await` its way down the list while `clearPackProblem`
+ * rewrites `packProblems` under it after every success.
+ */
+export const updatablePackProblems = (): PackProblem[] => {
+  const out: PackProblem[] = [];
+  for (const problem of packProblems.value) {
+    if (problem.kind !== 'dev-changed') out.push(problem);
+  }
+  return out;
+};
+
 /** Test seam, and what a completed update calls once the pack is replaced. */
 export function clearPackProblem(manifestUrl: string): void {
   const next: PackProblem[] = [];

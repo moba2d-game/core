@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import StatusFlags from '../../../src/game/enums/StatusFlags';
 import {
@@ -19,6 +19,14 @@ import {
   SpellRuntime,
   type SpellRuntimeDelegate,
 } from '../../../src/game/spell/runtime/SpellRuntime';
+import Spell from '../../../src/game/gameObject/Spell';
+import Champion from '../../../src/game/gameObject/attackableUnits/Champion';
+import { createGame, indexObjects, stubGameGlobals, type TestGame } from '../fixtures';
+import {
+  installSketchMathGlobals,
+  installSpellObjectGlobals,
+  pressSpell,
+} from '../spell/fixtures';
 import type { BuffConstructor } from '../../../src/game/gameObject/Buff';
 import type {
   CancelReason,
@@ -342,5 +350,146 @@ describe('cancel policy: control applied by somebody else', () => {
     const buffs: { sourceUnit: unknown }[] = [self, new UnrelatedBuff(enemy)];
 
     expect(foreignControlBuff(buffs, self, source, controlClasses)).toBeUndefined();
+  });
+});
+
+/**
+ * **A cast that movement ends has to end the movement first.**
+ *
+ * `ownerInterruptReason` watches `movementRevision`, which counts move
+ * *orders* — so a champion who was already walking when a channel started
+ * issued no new order, the watcher saw nothing, and she crossed the lane
+ * firing an ultimate she is supposed to be standing still for. Reported from a
+ * real match, against two different abilities.
+ *
+ * Driven through a real `Champion` rather than the stub the file uses above:
+ * the fix is `stopMovement()`, and only a body with feet has one.
+ */
+describe('cancel policy: a cast plants the caster', () => {
+  class Channelled extends Spell {
+    name = 'Channelled';
+    manaCost = 0;
+    coolDown = 0;
+
+    get castSpec(): CastSpec {
+      return {
+        activation: 'PRESS',
+        targeting: 'SELF',
+        channel: { durationMs: 2_000, tickEveryMs: 250 },
+        interrupts: SpellForm.CHANNELED,
+        resource: { commitAt: 'start', refundOn: [] },
+        cooldown: { startAt: 'start', durationMs: 0 },
+      };
+    }
+
+    onSpellCast(): void {}
+  }
+
+  /** The same spell with the form that is *not* movement-fragile. */
+  class Aimed extends Channelled {
+    name = 'Aimed';
+
+    get castSpec(): CastSpec {
+      return { ...super.castSpec, interrupts: SpellForm.AIMED };
+    }
+  }
+
+  /** A wind-up, which is a root — that is what a cast time is. */
+  class WindUp extends Channelled {
+    name = 'WindUp';
+
+    get castSpec(): CastSpec {
+      return {
+        activation: 'PRESS',
+        targeting: 'SELF',
+        castTimeMs: 300,
+        resource: { commitAt: 'start', refundOn: [] },
+        cooldown: { startAt: 'start', durationMs: 0 },
+      };
+    }
+  }
+
+  const walking = (game: TestGame): Champion => {
+    const champion = new Champion({ game, teamId: 'blue' });
+    champion.position.set(0, 0);
+    champion.moveTo(600, 0);
+    expect(champion.destination.x, 'the fixture never started walking').toBe(600);
+    return champion;
+  };
+
+  let game: TestGame;
+  beforeEach(() => {
+    stubGameGlobals();
+    installSpellObjectGlobals();
+    installSketchMathGlobals();
+    game = createGame();
+    game.setPlayer(new Champion({ game, teamId: 'player-uuid' }));
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('plants a walking champion when a channel starts', () => {
+    const champion = walking(game);
+    indexObjects(game, [champion]);
+
+    expect(pressSpell(new Channelled(champion))).toBe(true);
+
+    expect(champion.destination.x, 'she kept walking through her own channel').toBe(
+      champion.position.x
+    );
+  });
+
+  it('does not cancel the channel it just planted', () => {
+    const champion = walking(game);
+    indexObjects(game, [champion]);
+    const spell = new Channelled(champion);
+    expect(pressSpell(spell)).toBe(true);
+
+    vi.stubGlobal('deltaTime', 100);
+    spell.update();
+    vi.stubGlobal('deltaTime', 16);
+
+    expect(spell.state).toBe('CHANNELING');
+  });
+
+  it('still ends on a move order given after it started', () => {
+    const champion = walking(game);
+    indexObjects(game, [champion]);
+    const spell = new Channelled(champion);
+    pressSpell(spell);
+
+    champion.moveTo(-400, 0);
+    vi.stubGlobal('deltaTime', 16);
+    spell.update();
+
+    expect(spell.state).not.toBe('CHANNELING');
+  });
+
+  it('leaves a form that movement does not end alone', () => {
+    const champion = walking(game);
+    indexObjects(game, [champion]);
+
+    expect(pressSpell(new Aimed(champion))).toBe(true);
+
+    expect(champion.destination.x, 'an aimed spell rooted its caster').toBe(600);
+  });
+
+  it('holds her still for the whole of a cast time', () => {
+    const champion = walking(game);
+    indexObjects(game, [champion]);
+    const spell = new WindUp(champion);
+    expect(pressSpell(spell)).toBe(true);
+
+    // Mid-cast, and a move order arriving inside the wind-up is refused too —
+    // every frame, the way a swing's wind-up holds an attacker.
+    vi.stubGlobal('deltaTime', 100);
+    spell.update();
+    champion.moveTo(600, 0);
+    spell.update();
+    vi.stubGlobal('deltaTime', 16);
+
+    expect(spell.state).toBe('CASTING');
+    expect(champion.destination.x).toBe(champion.position.x);
   });
 });

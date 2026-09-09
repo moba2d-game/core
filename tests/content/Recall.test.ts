@@ -169,14 +169,16 @@ describe('Recall — going home', () => {
   });
 
   /**
-   * The fifth invisible thing, added with `combat/StealthBreak.ts`: every
-   * ability in the game gives a hidden caster away, and this is the one that
-   * must not. Pressing B is not an attack made out of stealth — it is how a
-   * stealthed champion leaves a lane alive — and a bar that lit its owner up
-   * the moment it started would make the pair useless together.
+   * Recalling out of stealth is how a stealthed champion leaves a lane alive,
+   * and a bar that lit its owner up the moment it started would make the pair
+   * useless together.
    *
-   * Not an escape hatch either: the channel above already breaks on damage,
-   * so this stays hidden exactly until somebody finds it.
+   * This used to need an opt-out (`breaksStealth = false`) because every cast
+   * in the game gave a hidden caster away. It is now free: `combat/StealthBreak.ts`
+   * ends a stealth on damage rather than on a press, and recall damages
+   * nobody. Kept anyway — the *guarantee* is what matters here, not which rule
+   * currently provides it, and the channel above already breaks on damage, so
+   * this stays hidden exactly until somebody finds it.
    */
   it('does not give a hidden champion away', () => {
     const champion = unit('blue', 1_500, 1_500);

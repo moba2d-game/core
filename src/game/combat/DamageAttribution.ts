@@ -65,6 +65,31 @@
  */
 export const BASIC_ATTACK_SOURCE = 'Đánh thường';
 
+/**
+ * The attribution every swing lands under.
+ *
+ * A basic attack is not ability damage — it scales on `attackDamage`, which
+ * items already pay for handsomely — and `coreSpells/BasicAttack` says so on
+ * the spell. But the spell is only the *order*: the swing itself becomes damage
+ * frames later, inside a `BasicAttackSwing` or a `BasicAttackBolt` whose
+ * attribution is whatever happened to be ambient when the controller launched
+ * it, which is during the attacker's own `update()`.
+ *
+ * That was `null` for every unit in the game, so the right answer came out of
+ * an accident. It stopped being an accident the day a summon started carrying
+ * its summoner's cast as its attribution (`Pet.attributedTo`): a pet's swings
+ * would have inherited it, and a decoy clone's basic attacks would quietly have
+ * been amplified by its owner's ability power on top of the attack damage they
+ * already scale on. `landBasicAttack` states the fact instead of inheriting it.
+ *
+ * It carries the label too, so a swing names itself in the recap from the same
+ * place — see `BASIC_ATTACK_SOURCE` above.
+ */
+export const BASIC_ATTACK_ATTRIBUTION: DamageAttributable = Object.freeze({
+  name: BASIC_ATTACK_SOURCE,
+  damageScalesWithAbilityPower: false,
+});
+
 export interface DamageAttributable {
   readonly name?: string;
   /**
@@ -73,6 +98,18 @@ export interface DamageAttributable {
    * for why the ambient answers this rather than `takeDamage` guessing.
    */
   readonly damageScalesWithAbilityPower?: boolean;
+  /**
+   * Whether damage landing under this attribution means somebody was **found**
+   * — the question `combat/StealthBreak.ts` asks of every hit, on both ends.
+   *
+   * Defaults to true, which is every cast, every swing and every effect in the
+   * game. `buffs/DamageOverTime` is what turns it off and states why: a poison
+   * already standing on a body ticks on its own clock, and neither end of that
+   * tick is anyone acting. Same shape as `damageScalesWithAbilityPower` above
+   * and for the same reason — the hit itself cannot tell, and whatever is
+   * running already knows.
+   */
+  readonly revealsStealth?: boolean;
 }
 
 let current: DamageAttributable | null = null;
@@ -124,6 +161,20 @@ export function currentAttribution(): DamageAttributable | null {
  */
 export function abilityPowerScales(): boolean {
   return current?.damageScalesWithAbilityPower === true;
+}
+
+/**
+ * Whether the hit being dealt right now gives a hidden unit away.
+ *
+ * **Opt-out, not opt-in** — the mirror of `abilityPowerScales` above, and
+ * deliberately the other way round. That one asks "is this an ability", where
+ * silence honestly means no; this one asks "did somebody just get found", where
+ * silence means yes: a hit whose author said nothing is an ordinary hit, and
+ * the failure of a wrong default here is a champion who cannot be revealed
+ * rather than one revealed too eagerly.
+ */
+export function attributionRevealsStealth(): boolean {
+  return current?.revealsStealth !== false;
 }
 
 /**

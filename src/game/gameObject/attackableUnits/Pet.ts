@@ -8,6 +8,7 @@ import type { AttackableUnitRenderOptions, UnitDeathData } from './AttackableUni
 import Invisible from '@/game/gameObject/buffs/Invisible';
 import Untargetable from '@/game/gameObject/buffs/Untargetable';
 import { isNetClient } from '@/game/net/netRole';
+import { currentAttribution, type DamageAttributable } from '@/game/combat/DamageAttribution';
 
 /** How often a pet re-picks its target. Cheaper than a query per frame, and it also stops it twitching between two equidistant enemies. */
 export const PET_SCAN_INTERVAL_MS = 250;
@@ -118,6 +119,41 @@ export default class Pet extends Champion {
     return this.ownerUnit;
   }
 
+  /**
+   * **A summon is its summoner's ability, still running.**
+   *
+   * Stamped at construction from whatever cast is on the stack, exactly the way
+   * `SpellObject` does it, and read back by `ObjectManager.attributed` around
+   * every one of this pet's lifecycle callbacks. Two things were wrong without
+   * it, both silent:
+   *
+   *   - `abilityPowerScales()` answered **false** for everything a pet did, so
+   *     a jester box shot for its authored 7 forever while its tooltip promised
+   *     `7 (+n)`, and a decoy clone's parting explosion did the same. Not one
+   *     summon in any installed pack read a point of the build that paid for
+   *     it — the precise failure `combat/Amplification.ts` was written to end,
+   *     surviving in the one population that reaches damage from `update()`
+   *     rather than from a cast.
+   *   - the death recap filed those hits under nothing, so being killed by a
+   *     box read as "Sát thương phép" with no ability named.
+   *
+   * A swing is not covered by this and must not be: `combat/BasicAttack.ts`
+   * brackets `landBasicAttack` with its own non-ability attribution, so a pet's
+   * basic attacks stay attack-damage business however they were launched. See
+   * the note there.
+   */
+  attributedTo: DamageAttributable | null = currentAttribution();
+
+  /**
+   * The build a summon's abilities read: its summoner's, never its own.
+   *
+   * Overrides `AttackableUnit.abilityDamageOwner`, which states the rule and
+   * why the *attacker* stays the pet.
+   */
+  get abilityDamageOwner(): AttackableUnit {
+    return this.ownerUnit;
+  }
+
   goldBounty = 0;
 
   ownerUnit: AttackableUnit;
@@ -161,8 +197,13 @@ export default class Pet extends Champion {
    * change should not silently answer it.
    */
   setHidden(hidden: boolean): void {
-    if (hidden === this.hidden) return;
-
+    // Revealing is unconditional, and the early return above it is only for
+    // hiding: `hidden` reads the *invisibility*, and something else can take
+    // that off on its own — a true sight, or `combat/StealthBreak.ts` when a
+    // hidden trap is hurt. A pet in that state answers `hidden === false`
+    // while still carrying the untargetability the pair hung, so a `setHidden(false)`
+    // that trusted the getter would return early and leave a box everyone can
+    // see and nobody can shoot.
     if (!hidden) {
       this.hiddenInvisible?.deactivateBuff?.();
       this.hiddenUntargetable?.deactivateBuff?.();
@@ -170,6 +211,8 @@ export default class Pet extends Champion {
       this.hiddenUntargetable = null;
       return;
     }
+
+    if (this.hidden) return;
 
     // Outlasts the pet on purpose: the pet's own clock ends the buff, and a
     // buff that expired first would quietly reveal it.

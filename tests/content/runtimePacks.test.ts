@@ -60,7 +60,12 @@ vi.mock('@/content/packCache', () => ({
 
 import { installRuntimePacks, installPackNow, DEFAULT_PACK_URL } from '@/content/runtimePacks';
 import { forgetPack, pinPackManifest, readPinnedManifest } from '@/content/packCache';
-import { checkPackUpdates, notePackSpellFailures, updatePack } from '@/content/runtimePacks';
+import {
+  checkPackUpdates,
+  notePackSpellFailures,
+  updatePack,
+  updatePacks,
+} from '@/content/runtimePacks';
 import { notePackProblem, packProblems, resetPackHealthForTests } from '@/content/packHealth';
 import { fetchPackManifest, loadPackFromManifest } from '@/content/packSource';
 import { installRuntimePack } from '@/content/install';
@@ -807,6 +812,94 @@ describe('updatePack', () => {
 
   it('answers false for a URL that is not installed', async () => {
     await expect(updatePack('https://h/nope/manifest.json')).resolves.toBe(false);
+    expect(fetchPackManifest).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * **Three stale packs are one press, not three reloads.**
+ *
+ * The menu updated `packProblems[0]` and reloaded, so a player with three
+ * packs behind answered the same notice three times and only learned there was
+ * another after each reload. Reported exactly that way.
+ *
+ * What this has to get right is the *order*: `updatePack` is a
+ * read-modify-write of the installed list, so two of them in flight together
+ * both read the same snapshot and the second write puts back the first's stale
+ * record — an update that reports success and did not move.
+ */
+describe('updatePacks', () => {
+  const RIOT_URL = 'https://packs.example/riot/manifest.json';
+  const DOTA_URL = 'https://packs.example/dota/manifest.json';
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetPackHealthForTests();
+    withStorage();
+    writeInstalledPacks([
+      { manifestUrl: RIOT_URL, id: 'riot', version: '1.0.0', name: 'Riot', buildId: 'old' },
+      { manifestUrl: DOTA_URL, id: 'dota', version: '1.0.0', name: 'Dota', buildId: 'old' },
+    ]);
+  });
+  afterEach(() => {
+    delete (globalThis as Record<string, unknown>).localStorage;
+  });
+
+  it('moves every pack it was handed, and says how many', async () => {
+    vi.mocked(fetchPackManifest).mockImplementation((async (url: string) => ({
+      ...manifest,
+      id: url === DOTA_URL ? 'dota' : 'riot',
+      buildId: 'new',
+    })) as never);
+
+    await expect(updatePacks([RIOT_URL, DOTA_URL])).resolves.toBe(2);
+
+    const stored = readInstalledPacks();
+    expect(stored.map(record => record.buildId)).toEqual(['new', 'new']);
+  });
+
+  /**
+   * The read-modify-write, held to the thing that would break it: if the
+   * second call read its snapshot before the first had written, the first
+   * pack's new build id would be gone from the list at the end.
+   */
+  it('runs them one at a time, so neither write clobbers the other', async () => {
+    const seen: string[] = [];
+    vi.mocked(fetchPackManifest).mockImplementation((async (url: string) => {
+      // Every fetch has to observe the *finished* state of the one before it.
+      seen.push(`start:${url}`);
+      await Promise.resolve();
+      seen.push(`end:${url}`);
+      return { ...manifest, id: url === DOTA_URL ? 'dota' : 'riot', buildId: 'new' };
+    }) as never);
+
+    await updatePacks([RIOT_URL, DOTA_URL]);
+
+    expect(seen).toEqual([
+      `start:${RIOT_URL}`,
+      `end:${RIOT_URL}`,
+      `start:${DOTA_URL}`,
+      `end:${DOTA_URL}`,
+    ]);
+    expect(readInstalledPacks().map(record => record.buildId)).toEqual(['new', 'new']);
+  });
+
+  /** One dead host does not hold the ones that worked. */
+  it('counts only what moved when a host refuses', async () => {
+    vi.mocked(fetchPackManifest).mockImplementation((async (url: string) => {
+      if (url === DOTA_URL) throw new Error('offline');
+      return { ...manifest, buildId: 'new' };
+    }) as never);
+
+    await expect(updatePacks([RIOT_URL, DOTA_URL])).resolves.toBe(1);
+
+    const stored = readInstalledPacks();
+    expect(stored[0].buildId).toBe('new');
+    expect(stored[1].buildId, 'a refused fetch moved the record anyway').toBe('old');
+  });
+
+  it('answers zero for an empty list without touching the network', async () => {
+    await expect(updatePacks([])).resolves.toBe(0);
     expect(fetchPackManifest).not.toHaveBeenCalled();
   });
 });

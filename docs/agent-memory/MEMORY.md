@@ -45,3 +45,5 @@
 - [Decoys + hidden traps](moba2d-decoys-and-hidden-traps.md) — Pet.disguisedAsChampion replaces naruto's hack; Untargetable's rings were painted at a fixed alpha, so buried boxes glowed
 - [Roster expansion 2026-09](moba2d-roster-expansion-2026-09.md) — 30 tướng cả 3 pack trong một phiên; specs bền ở moba2d/_specs/; traps mỗi pack đã trả giá
 - [Declared but never wired](moba2d-declared-never-wired.md) — ON_HEAL/ON_BUFF_ADD/InBush khai mà không ai emit; DamageAttribution có mà không expose; và câu trả lời dứt điểm cho contract bump
+- [Stealth + summon scaling](moba2d-stealth-and-summon-scaling.md) — tàng hình chỉ vỡ khi ăn/gây damage; pet damage cuối cùng cũng scale (3 sửa, thiếu 1 là vô hiệu); bẫy test file-count + vocabulary gate
+- [Zeus + Sett balance](moba2d-zeus-and-sett-balance.md) — Zeus chỉ chạm tướng + sét rơi có độ trễ (né được); Sett R ăn theo % máu người bị bế; bẫy fixture unit() không phải Champion
