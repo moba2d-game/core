@@ -91,3 +91,22 @@ of it, which is what the user meant by "miss E … nó ko ngưng".
   fixture that ticks the world (also hit in `lol/tests/spells/Zed.test.ts`).
 - A share of *current* health must be read **before** the hit, or the helper
   reports on the smaller body it just left.
+
+**Shipping this took three gates nobody remembers until they fire:**
+- `npm run contract:bump` is the only right way to raise core's version — the
+  recorded contract **must equal core's minor** (`apiContract.test.ts` asserts
+  it), so editing `package.json` by hand fails the suite. Adding a class member
+  or a TS interface field is *not* a surface change, so the surface list was
+  untouched and only the number moved.
+- The **pre-push perf guard** (`moba2d-perf-guard`) refuses on a *new*
+  `heavy-draw` finding: MissFortune R's rewritten volley hit ~85 p5 calls a
+  frame against a ceiling of 60. Fixed rather than skipped, by computing the
+  rotated slug corners by hand (`quad`) instead of `push/rotate/pop` per bullet
+  and hoisting the two fills out of the loop. Its **dynamic** half needs Chrome
+  at the macOS app path — `MOBA2D_CHROME_CHANNEL= git push` swaps in
+  Playwright's bundled Chromium and the guard runs for real.
+- dota's pre-push also runs `check-unused`: one leftover test import blocked it.
+- `lol` **commits `generated/spellCatalog.ts`** (dota gitignores `generated/`),
+  which is what caught a real bug in a description: lol's local `pct` takes a
+  *fraction* while `api.text.pct` takes a *percent*, and mixing them printed
+  "tăng theo 5000% sức mạnh phép" on Luden's card.
