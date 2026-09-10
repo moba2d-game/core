@@ -92,6 +92,15 @@ of it, which is what the user meant by "miss E … nó ko ngưng".
 - A share of *current* health must be read **before** the hit, or the helper
   reports on the smaller body it just left.
 
+**The bug the Q rewrite shipped, and the shape worth remembering:** a missed
+shot never went away. The chain's fade started in `land()` and only there, so a
+cast handed `head = null` never entered it, `spentAtMs` stayed null, and the
+removal test could never be true — the bolt stayed painted for the rest of the
+match. **A removal condition gated behind a state the miss path never reaches**
+is the general form; the fix is an invariant over "is anything still in flight"
+rather than a second null check at the cast site. Worth checking on any object
+whose expiry is tied to its payload resolving.
+
 **Shipping this took three gates nobody remembers until they fire:**
 - `npm run contract:bump` is the only right way to raise core's version — the
   recorded contract **must equal core's minor** (`apiContract.test.ts` asserts
