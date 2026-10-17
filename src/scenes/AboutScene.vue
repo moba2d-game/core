@@ -42,6 +42,10 @@ const emit = defineEmits<{ close: []; openPacks: [] }>();
  * than no link at all — see `README.md`, which carried the same stale URL.
  */
 const REPO_URL = 'https://github.com/moba2d-game/core';
+
+/** AIO Desktop lists this game too and embeds it in an iframe; the link is pointless there. */
+const AIO_DESKTOP_URL = 'https://fbaio.org/#/desktop';
+const isEmbedded = typeof window !== 'undefined' && window.self !== window.top;
 </script>
 
 <template>
@@ -110,6 +114,16 @@ const REPO_URL = 'https://github.com/moba2d-game/core';
             rel="noopener noreferrer"
           >
             <i class="fab fa-github" aria-hidden="true"></i> Mã nguồn
+          </a>
+          <a
+            v-if="!isEmbedded"
+            class="hextech-btn secondary about-link"
+            :href="AIO_DESKTOP_URL"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            <i class="fas fa-desktop" aria-hidden="true"></i> Thêm công cụ &amp; trò chơi: AIO
+            Desktop
           </a>
         </div>
       </section>

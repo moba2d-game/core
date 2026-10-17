@@ -1,6 +1,9 @@
 # MOBA2D Core
 
 [![Build](https://github.com/moba2d-game/core/actions/workflows/build.yml/badge.svg)](https://github.com/moba2d-game/core/actions/workflows/build.yml)
+<!-- aio-desktop-badge:start -->
+[![AIO Desktop](https://img.shields.io/badge/Try-AIO_Desktop-7c3aed?style=for-the-badge&logo=googlechrome&logoColor=white)](https://fbaio.org/#/desktop)
+<!-- aio-desktop-badge:end -->
 
 A 2D MOBA engine that runs entirely in the browser — team fights, bot opponents, fog of war, lanes and minion waves, and an installable PWA that plays offline.
 
@@ -253,3 +256,11 @@ Two things about that set are worth knowing before changing it:
 Champion art, ability icons and champion names for the 58-champion roster are **not** here at all: they live in the separate content pack, which is where Riot-derived material belongs — and the packs screen names that pack for what it is, because a player deciding whether to install something has to know what it contains.
 
 League of Legends and all related trademarks, characters, artwork and other assets are the property of Riot Games. This project claims no ownership over that intellectual property. None of it is in this repository — that is what the section above is for.
+
+<!-- aio-desktop:start -->
+### 🖥️ AIO Desktop
+
+**EN:** Find this game and many more free tools & games in **[AIO Desktop](https://fbaio.org/#/desktop)**, a Windows/macOS-style web desktop by Social AIO. [▶ Open AIO Desktop](https://fbaio.org/#/desktop)
+
+**VI:** Xem game này cùng nhiều công cụ, trò chơi miễn phí khác trong **[AIO Desktop](https://fbaio.org/#/desktop)**, màn kiểu Windows/macOS của Social AIO. [▶ Mở AIO Desktop](https://fbaio.org/#/desktop)
+<!-- aio-desktop:end -->
