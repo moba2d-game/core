@@ -100,4 +100,13 @@ export const SUGGESTED_PACKS: SuggestedPack[] = [
     repoUrl: 'https://github.com/moba2d-packs/naruto',
     icon: 'https://moba2d-packs.github.io/naruto/icon.png',
   },
+  {
+    id: 'tidelight',
+    name: 'Tidelight — Triều Đăng',
+    description:
+      'Thế giới gốc, không dựa trên game nào: 5 tướng, bản đồ Driftglass Reef và luật chơi riêng — hộ tống Đèn Triều về bến trong lúc thuỷ triều đổi chiều mỗi 30 giây. Có 2 phép bổ trợ riêng.',
+    manifestUrl: 'https://moba2d-packs.github.io/tidelight/manifest.json',
+    repoUrl: 'https://github.com/moba2d-packs/tidelight',
+    icon: 'https://moba2d-packs.github.io/tidelight/icon.png',
+  },
 ];
