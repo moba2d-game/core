@@ -435,6 +435,16 @@ describe.each(SOURCES)('MatchConfigSource contract — %s', (name, make) => {
       expect(loadPregameConfig().rules.recall).toBe(false);
     });
 
+    it.each([
+      ['twins', 6],
+      ['bounty', 8],
+    ] as const)('serves %s: remembered, persisted, rostered', async (id, rosterSize) => {
+      await source.setMode(id);
+      expect(source.getMode()).toBe(id);
+      expect(loadPregameConfig().mode).toBe(id);
+      expect(source.roster()).toHaveLength(rosterSize);
+    });
+
     it('reshapes the roster to the mode’s bot count, and persists the count', async () => {
       expect(source.botCount()).toBe(1);
       await source.setMode('classic');

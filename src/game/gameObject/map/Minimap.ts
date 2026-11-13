@@ -153,6 +153,8 @@ export interface MinimapHost {
    * the practice panel's reveal cheat and nothing else. See `MinimapVision`.
    */
   visionCircles(): readonly VisionCircle[] | null;
+  /** The poison zone's circles, world space; absent or null outside the zone mode. */
+  zone?(): { current: Point & { r: number }; next: (Point & { r: number }) | null } | null;
   /** Where the player is, always drawn — you can always see yourself. */
   playerPosition(): Point;
   /** `Camera.getBoundingBox()`: the one element that answers "where am I looking". */
@@ -469,6 +471,33 @@ export class Minimap {
     // not — the veil is repainted on the moving layer's own 20Hz beat, and the
     // static trace it sits over is still built once per size.
     this.paintFog(graphics, local, mapSize, size);
+
+    // One veil path (even-odd hole) and one ring, then the warning ring.
+    const zone = this.host.zone?.();
+    if (zone) {
+      const k = size / mapSize;
+      const c = zone.current;
+      const ctx = graphics.drawingContext as CanvasRenderingContext2D;
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(0, 0, size, size);
+      ctx.moveTo((c.x + c.r) * k, c.y * k);
+      ctx.arc(c.x * k, c.y * k, c.r * k, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(120, 40, 160, 0.4)';
+      ctx.fill('evenodd');
+      ctx.beginPath();
+      ctx.arc(c.x * k, c.y * k, c.r * k, 0, Math.PI * 2);
+      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = 'rgba(190, 90, 255, 1)';
+      ctx.stroke();
+      if (zone.next) {
+        ctx.beginPath();
+        ctx.arc(zone.next.x * k, zone.next.y * k, zone.next.r * k, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
 
     // The view rectangle first, so no dot is hidden under its outline.
     const box = this.host.cameraBox();

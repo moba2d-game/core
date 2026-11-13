@@ -11,7 +11,12 @@ import Minion from '@/game/gameObject/attackableUnits/Minion';
 import Monster from '@/game/gameObject/attackableUnits/Monster';
 import { PredefinedParticleSystems } from '@/game/gameObject/helpers/ParticleSystem';
 import type { ActiveMap, TerrainZone } from '@/content/ContentPack';
-import { resolveTerrainTuning, type ResolvedTerrainTuning } from '@/game/config/mapTuning';
+import {
+  resolveIce,
+  resolveTerrainTuning,
+  type ResolvedIce,
+  type ResolvedTerrainTuning,
+} from '@/game/config/mapTuning';
 import Obstacle from './Obstacle';
 import TerrainField from './TerrainField';
 
@@ -84,6 +89,15 @@ export default class TerrainMap {
    * layer down.
    */
   readonly zones: readonly TerrainZone[];
+  /** `MapSummary.paintsOwnTerrain`: the pack's scenery covers the obstacles. */
+  readonly paintsOwnTerrain: boolean;
+  /** `MapSummary.ice` resolved. See `IceTuning`. */
+  readonly ice: ResolvedIce;
+  /**
+   * Whether any ground is icy at all: false for every map that declares
+   * nothing, which is what keeps `updateIce` from running a single query.
+   */
+  readonly hasIce: boolean;
   private readonly zoneQuadtree: Quadtree | null;
 
   /**
@@ -96,6 +110,7 @@ export default class TerrainMap {
   constructor(game: any, map: ActiveMap) {
     this.game = game;
     this.size = map.size;
+    this.paintsOwnTerrain = map.paintsOwnTerrain === true;
     this.obstacles = [];
 
     this.rippleEffect = PredefinedParticleSystems.ripple();
@@ -136,6 +151,9 @@ export default class TerrainMap {
     );
     this.terrainSpeed =
       zonesAffectSpeed && !tuned.affectsSpeed ? { ...tuned, affectsSpeed: true } : tuned;
+
+    this.ice = resolveIce(map.ice);
+    this.hasIce = this.ice.everywhere || this.zones.some(zone => zone.ice === true);
   }
 
   /** One quadtree over every polygon of every zone. See `zones`. */
@@ -327,6 +345,7 @@ export default class TerrainMap {
     for (const m of walkers) this.pushOutOfWalls(m);
 
     this.updateTerrainSpeed();
+    this.updateIce();
   }
 
   /**
@@ -362,6 +381,32 @@ export default class TerrainMap {
       if (unit.stats.speed.value <= 0) continue;
       unit.terrainSpeedFactor = this.speedFactorAt(unit.position.x, unit.position.y);
     }
+  }
+
+  /**
+   * Writes `onIce` on every unit that can walk. Returns at once on a map with
+   * no ice (one boolean, no query), and `onIce` then stays false forever, so
+   * `AttackableUnit.move()` never leaves its old code path.
+   */
+  updateIce(): void {
+    if (!this.hasIce) return;
+    const units = this.game.objectManager.queryObjects({
+      queryByDisplayBoundingBox: true,
+      filters: [PredefinedFilters.type(AttackableUnit), PredefinedFilters.excludeDead],
+    });
+    for (const unit of units) {
+      if (unit.stats.speed.value <= 0) continue;
+      unit.onIce = this.isIceAt(unit.position.x, unit.position.y);
+    }
+  }
+
+  /** Whether a point is icy: the whole map, or inside any `ice: true` zone. */
+  isIceAt(x: number, y: number): boolean {
+    if (this.ice.everywhere) return true;
+    for (const region of this.zoneRegionsAt(x, y)) {
+      if (region.zone.ice === true) return true;
+    }
+    return false;
   }
 
   /**
@@ -467,6 +512,11 @@ export default class TerrainMap {
   private _bushes: Obstacle[] = [];
 
   draw(): void {
+    if (this.paintsOwnTerrain) {
+      // The pack paints the obstacles; zones are still core's to draw.
+      this.drawZones();
+      return;
+    }
     push();
     const obstacles = this.getObstaclesInView();
 

@@ -654,15 +654,38 @@ const randomised = (loadout: ChampionLoadout): ChampionLoadout => ({
 
 export const planMatchKits = (config: {
   player: ChampionLoadout;
-  ai: { count: number; bots: readonly ChampionLoadout[] };
+  ai: { count: number; bots: readonly ChampionLoadout[]; botTeams?: readonly string[] };
   mode?: MatchModeId;
+  playerTeam?: string;
 }): MatchPlan => {
   const mode = matchModeFor(config.mode);
-  const plan = (loadout: ChampionLoadout): KitPlan =>
-    planLoadout(mode.allRandom ? randomised(loadout) : loadout);
+  // Twins: one roll per team, kept per unit's own summoners.
+  const rolled = new Map<string, KitPlan>();
+  const twin = (team: string, loadout: ChampionLoadout): KitPlan => {
+    let base = rolled.get(team);
+    if (!base) {
+      base = planRandomKit();
+      rolled.set(team, base);
+    }
+    return {
+      ...base,
+      spellIds: [
+        ...base.spellIds.slice(0, 5),
+        summonerIdOr(loadout.summonerD),
+        summonerIdOr(loadout.summonerF),
+      ],
+    };
+  };
+  const plan = (loadout: ChampionLoadout, team: string): KitPlan =>
+    mode.twins
+      ? twin(team, loadout)
+      : planLoadout(mode.allRandom ? randomised(loadout) : loadout);
+  const playerTeam = config.playerTeam ?? 'BLUE';
   return {
-    player: plan(config.player),
-    bots: Array.from({ length: config.ai.count }, (_, i) => plan(config.ai.bots[i] ?? config.player)),
+    player: plan(config.player, playerTeam),
+    bots: Array.from({ length: config.ai.count }, (_, i) =>
+      plan(config.ai.bots[i] ?? config.player, config.ai.botTeams?.[i] ?? 'RED')
+    ),
     mode: mode.id,
   };
 };

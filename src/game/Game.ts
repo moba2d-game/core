@@ -12,15 +12,23 @@ import { randomMatchSeed } from './matchSeed';
 import { freshRenderStress, nextStressState, stressTier } from './render/renderStress';
 import { resolveEconomy } from './config/mapTuning';
 import { matchModeFor, mergeTuning, type MatchModeId } from './config/matchModes';
+import EventDirector from './events/EventDirector';
+import EventType from './enums/EventType';
+import { reachablePoints, type Point } from './events/randomEvents';
 import { clearActiveLanes, setActiveLanes } from './lanes';
 import AttackableUnit from './gameObject/attackableUnits/AttackableUnit';
 import Champion from './gameObject/attackableUnits/Champion';
+import Pet from './gameObject/attackableUnits/Pet';
 import AIChampion from './gameObject/attackableUnits/AIChampion';
 import Monster from './gameObject/attackableUnits/Monster';
 import { teamBodyColor } from './gameObject/attackableUnits/Minion';
 import Camera, { zoomFactorPreference } from './gameObject/map/Camera';
 import FogOfWar from './gameObject/map/FogOfWar';
 import TerrainMap from './gameObject/map/TerrainMap';
+import ZoneController from './zone/ZoneController';
+import { drawZone, zoneBanner } from './zone/drawZone';
+import { ZoneEndCard, zoneEndCardView } from './zone/zoneEndCard';
+import { zoneLivesLabel } from './zone/zoneRules';
 import Minimap, {
   hitTest,
   MINIMAP_LIVE_INTERVAL_MS,
@@ -69,6 +77,7 @@ import { drawDebugOverlay } from './debug/DebugOverlay';
 import { FpsMeter, drawFpsOverlay } from './debug/FpsOverlay';
 import EventManager from '@/managers/EventManager';
 import MatchAnnouncer from '@/game/combat/Announcer';
+import { bountyForKill, wantedOf } from '@/game/combat/Bounty';
 import { invalidateSafeArea } from '@/game/render/safeArea';
 import { DeathCamera, type SpectateCandidate } from './render/deathCamera';
 import { MatchRecorder } from './combat/MatchRecorder';
@@ -145,6 +154,9 @@ import {
   type RenderFps,
 } from './config/renderPreferences';
 
+/** Truy Nã: the wanted champion's minimap dot, gold. */
+const WANTED_BLIP_COLOR = [255, 205, 40] as const;
+
 export default class Game {
   /**
    * The active map's edge length in world units — `map.size`, set in the
@@ -181,6 +193,20 @@ export default class Game {
    * report it back to the panel.
    */
   readonly matchMode: MatchModeId;
+  private _zone: ZoneController | null | undefined;
+  /** The zone mode's end card: Trận mới / Về menu / Xem tiếp. */
+  private zoneEndCard: ZoneEndCard | null = null;
+  /**
+   * The poison zone of the `zone` mode, or null in every other. Built on first
+   * use because a net client's `matchSeed` is set after the constructor.
+   */
+  get zone(): ZoneController | null {
+    if (this._zone === undefined) {
+      this._zone =
+        matchModeFor(this.matchMode).zone ? new ZoneController(this.mapSize, this.matchSeed) : null;
+    }
+    return this._zone;
+  }
   /**
    * What a sale pays back in this match — `EconomyTuning.sellRefund`.
    *
@@ -254,6 +280,8 @@ export default class Game {
   eventManager!: EventManager;
   /** Who killed whom, as the kill feed tells it. See `combat/Announcer.ts`. */
   announcer!: MatchAnnouncer;
+  /** Sự Kiện Ngẫu Nhiên's schedule; only in that mode, never on a LAN client. See `events/`. */
+  eventDirector: EventDirector | null = null;
   /** Where the camera goes while the player is dead. See `render/deathCamera.ts`. */
   deathCamera!: DeathCamera<Champion>;
   /**
@@ -504,6 +532,7 @@ export default class Game {
       nowMs: () => this.matchTimeMs,
       follow: target => this.followForDeathCamera(target),
     });
+    this.announcer.bountyEnabled = mode.bounty === true;
     this.announcer.attach();
     this.terrainMap = new TerrainMap(this, map);
     // The map is static, so every unit's routing is derived from the wall layer
@@ -528,6 +557,7 @@ export default class Game {
     // `TerrainMap` would build an identical second one and hold it twice.
     this.terrainMap.useNavGrid(this.navigation.grid);
     this.fogOfWar = new FogOfWar(this);
+    if (mode.randomEvents && !isNetClient()) this.eventDirector = this.createEventDirector();
     this.minimap = new Minimap(this.minimapHost());
     this.inGameHUD = new InGameHUD(this);
 
@@ -642,7 +672,11 @@ export default class Game {
           // deaths, while a bot left on 'random' keeps re-rolling exactly as
           // it always has (getChampionPresetFromLoadout falls through to
           // getChampionPresetRandom for 'random').
-          presetFactory: () => getChampionPresetFromLoadout(botLoadout),
+          // Twins: the team's rolled champion, not a fresh roll, every life.
+          presetFactory:
+            mode.twins && kits.bots[i]
+              ? () => presetFromPlan(kits.bots[i])
+              : () => getChampionPresetFromLoadout(botLoadout),
           autoMove: botBehaviour.autoMove,
           autoAttack: botBehaviour.autoAttack,
           autoCast: botBehaviour.autoCast,
@@ -673,6 +707,11 @@ export default class Game {
     // clearing: the camps would be flushed into the world by the first
     // `ObjectManager.update()` and only swept by the second, i.e. one frame of
     // camps a player who switched the jungle off never asked to see.
+    // A pack's own slot objects (a map's rules, its art) are furniture, not
+    // jungle: they stand whatever the switch says. Before this a jungle-off
+    // lobby got a map with invisible walls — its art lived in a slot object —
+    // until a hero of that pack happened to cast.
+    this.spawnSlotObjects();
     if (pregameConfig.world.jungle) this.spawnJungle();
     this.spawnTurrets(map.slots.structure, map.factions, map.tuning);
     // the spawner reads teams off the fountains, so it comes after them
@@ -736,11 +775,47 @@ export default class Game {
    * @param factions The active map's own `factions`, in declared order —
    *   `fountainsFromSlots`/`teamIdOfFaction` read position 0/1 as BLUE/RED.
    */
+  private createEventDirector(): EventDirector {
+    let points: Point[] | null = null;
+    return new EventDirector({
+      game: this,
+      seed: this.matchSeed,
+      now: () => this.matchTimeMs,
+      champions: () => {
+        const out: Champion[] = [];
+        for (const object of this.objectManager.objects) {
+          if (object instanceof Champion && !object.toRemove) out.push(object);
+        }
+        return out;
+      },
+      spawn: object => this.objectManager.addObject(object),
+      reachable: () => (points ??= reachablePoints(this.navigation.grid, this.player.position)),
+      center: () => ({ x: this.mapSize / 2, y: this.mapSize / 2 }),
+      mapSize: () => this.mapSize,
+      onDeath: listener => this.eventManager.on(EventType.ON_DIE, listener),
+    });
+  }
+
   spawnFountains(spawnSlots: SpawnSlot[], factions: ActiveMap['factions'], tuning?: MapTuning) {
     for (const preset of fountainsFromSlots(spawnSlots, factions, tuning)) {
       const fountain = new Fountain({ game: this, preset });
       this.fountains.push(fountain);
       this.objectManager.addObject(fountain);
+    }
+  }
+
+  /**
+   * The neutral slots a pack fills with its own object — map rules, map art.
+   * Called once at boot, jungle on or off; `spawnJungle` skips these.
+   */
+  spawnSlotObjects() {
+    for (const slot of this.neutralSlots) {
+      const fill = neutralSlotFill(slot);
+      if (!fill || fill.kind !== 'object') continue;
+      const object = fill.build(slot, this);
+      // `null` is a slot the pack looked at and declined, which is how it
+      // conditions on the slot's own numbers without core learning them.
+      if (object) this.objectManager.addObject(object);
     }
   }
 
@@ -768,15 +843,9 @@ export default class Game {
       // The ruling lives in `preset.ts` rather than in this loop because this
       // loop cannot be tested: nothing constructs a real `Game`.
       const fill = neutralSlotFill(slot);
-      if (!fill) continue;
-
-      if (fill.kind === 'object') {
-        const object = fill.build(slot, this);
-        // `null` is a slot the pack looked at and declined, which is how it
-        // conditions on the slot's own numbers without core learning them.
-        if (object) this.objectManager.addObject(object);
-        continue;
-      }
+      // Objects are `spawnSlotObjects`' — once per match, never by the jungle
+      // switch, which would otherwise add a second copy on every flip back on.
+      if (!fill || fill.kind === 'object') continue;
 
       const monster = fill.monster;
       for (const member of monster.members) {
@@ -860,6 +929,7 @@ export default class Game {
     // who was dead when the switch was flipped, or who has died since. See
     // `MatchDirector.tick`.
     this.director?.tick();
+    this.tickZone();
     this.camera.update();
     this.worldMouse = this.camera.screenToWorld(mouseX, mouseY);
     // before objectManager.update(), so a minion released this frame is added
@@ -870,6 +940,7 @@ export default class Game {
     // hundred microseconds whatever the board looks like.
     this.navigation.update();
     this.objectManager.update();
+    this.eventDirector?.tick();
     this.terrainMap.update();
 
     // Not through the minimap: a right click on the overlay would otherwise
@@ -908,6 +979,65 @@ export default class Game {
     // positions with interpolated truth so the draw that follows paints the
     // network's answer, not the local guess.
     this.net?.update();
+  }
+
+  private tickZone(): void {
+    const zone = this.zone;
+    if (!zone) return;
+    const victims: Champion[] = [];
+    const fighters: { teamId: string; isDead: boolean }[] = [];
+    for (const object of this.objectManager.objects) {
+      if (!(object instanceof Champion)) continue;
+      victims.push(object);
+      // Down with a life left is not out: only an eliminated champion counts.
+      if (!(object instanceof Pet))
+        fighters.push({ teamId: String(object.teamId), isDead: object.zoneEliminated });
+    }
+    zone.tick(1000 / this.fps, this.matchTimeMs, victims, fighters);
+  }
+
+  /**
+   * Where bots of `_teamId` should be, or null (every mode but `zone`). The
+   * next circle while the warning is up, otherwise the current one. Read by
+   * `TeamBlackboard` once per snapshot; see `BlackboardHost.botGoalArea`.
+   */
+  botGoalArea(teamId: unknown, nowMs: number): { x: number; y: number; r: number } | null {
+    const zone = this.zone;
+    // Not a zone match: Sự Kiện's objective events (springs, chest) borrow the hook.
+    if (!zone) return this.eventDirector?.goalArea(teamId) ?? null;
+    if (zone.result) return null;
+    const state = zone.state(nowMs);
+    return state.next ?? state.current;
+  }
+
+  /** Screen-space countdown / verdict of the `zone` mode. */
+  private drawZoneBanner(): void {
+    const zone = this.zone;
+    if (!zone) return;
+    const line = zoneBanner(zone.state(this.matchTimeMs), zone.result, String(this.player.teamId));
+    if (zone.result) {
+      this.zoneEndCard ??= new ZoneEndCard({
+        rematch: () => this.onRestartRequested?.(),
+        menu: () => this.onExitRequested?.(),
+      });
+      this.zoneEndCard.sync(
+        zoneEndCardView(zone.result, String(this.player.teamId), isNetClient())
+      );
+    }
+    if (this.zoneEndCard?.visible) return;
+    const lives = zone.result ? '' : zoneLivesLabel(this.player);
+    // The countdown, with the player's lives after it; lives alone between warnings.
+    const shown = line ? line + lives : lives.replace(/^ · /, '');
+    if (!shown) return;
+    push();
+    noStroke();
+    fill(0, 0, 0, 150);
+    textAlign(CENTER, CENTER);
+    textSize(zone.result ? 44 : 20);
+    text(shown, width / 2 + 2, (zone.result ? height * 0.3 : 96) + 2);
+    fill(255);
+    text(shown, width / 2, zone.result ? height * 0.3 : 96);
+    pop();
   }
 
   /**
@@ -981,6 +1111,9 @@ export default class Game {
         if (spell.willDrawPreview) spell.drawPreview?.();
       });
       this.objectManager.draw(alpha);
+      if (this.zone) {
+        drawZone(drawingContext, this.zone.state(this.matchTimeMs), this.camera.getBoundingBox());
+      }
       // After the units, so the ring sits on top of the body it is marking, and
       // at game level rather than on the caster: see combat/ExecuteMarks.ts.
       drawExecuteMarks(this);
@@ -995,6 +1128,11 @@ export default class Game {
     // After the fog, outside camera.makeDraw: both of these are screen space,
     // and an overlay you cannot see is not an overlay.
     this.minimap.draw();
+    this.drawZoneBanner();
+    this.eventDirector?.drawAmbience(
+      stressTier(this.renderQuality, this.renderStressed, this.deeplyStressed)
+    );
+    this.eventDirector?.drawBanner();
     this.touchControls.draw();
     // Screen space for the same reason, and the last of the three: a fixed
     // HUD corner, not a world position the camera would pan or zoom under it.
@@ -1018,6 +1156,21 @@ export default class Game {
     // lanes before anything that can throw means one bad teardown loses at
     // most its own cleanup, not every match after it.
     clearActiveLanes();
+    // Every object lets go of what it holds outside the canvas. Each in its
+    // own try: one pack object that throws must not keep the rest (or the
+    // fog, minimap and HUD below) from being torn down.
+    this.zoneEndCard?.destroy();
+    this.zoneEndCard = null;
+    const manager = this.objectManager;
+    for (const list of manager ? [manager.objects, manager._objectToBeAdd] : []) {
+      for (const object of list) {
+        try {
+          object.onMatchTeardown();
+        } catch (error) {
+          console.error('[Game.destroy] onMatchTeardown threw', error);
+        }
+      }
+    }
     // The last word on this match, before the announcer it listens to goes.
     this.recorder?.save();
     this.recorder?.detach();
@@ -1415,9 +1568,37 @@ export default class Game {
    * `director.revealMap` is the practice panel's cheat, and it is the only
    * thing here that can override the fog.
    */
+  private wantedAtMs = -1;
+  private wantedCache: AttackableUnit | null = null;
+
+  /**
+   * Truy Nã: the live champion on the longest run (>= 3), or null. Cached per
+   * simulation tick because every champion's health bar asks.
+   */
+  wantedChampion(): AttackableUnit | null {
+    if (!this.announcer?.bountyEnabled) return null;
+    if (this.wantedAtMs !== this.matchTimeMs) {
+      this.wantedAtMs = this.matchTimeMs;
+      const all: AttackableUnit[] = [this.player, ...(this.director?.bots() ?? [])];
+      this.wantedCache = wantedOf(all, unit => this.announcer.streakOf(unit));
+    }
+    return this.wantedCache;
+  }
+
+  /** Extra gold for killing `victim`; read from `AttackableUnit.die` before its run is reset. */
+  bountyExtra(victim: AttackableUnit, killer: AttackableUnit): number {
+    return bountyForKill(
+      this.announcer?.bountyEnabled === true,
+      victim,
+      killer,
+      this.announcer?.streakOf(victim) ?? 0
+    );
+  }
+
   private minimapBlips(): MinimapBlip[] {
     const blips: MinimapBlip[] = [];
     const reveal = this.director.revealMap;
+    const wanted = this.wantedChampion();
     for (const object of this.objectManager.objects) {
       // The player is drawn separately, always, in its own colour.
       if (object === this.player) continue;
@@ -1434,7 +1615,7 @@ export default class Game {
           : object instanceof Champion || object instanceof AIChampion
             ? 'champion'
             : 'unit',
-        color: teamBodyColor(String(object.teamId)),
+        color: object === wanted ? WANTED_BLIP_COLOR : teamBodyColor(String(object.teamId)),
       });
     }
     return blips;
@@ -1450,6 +1631,7 @@ export default class Game {
       // matches the one override `minimapBlips` above already honours.
       visionCircles: () => (this.director.revealMap ? null : this.fogOfWar.visionCircles()),
       playerPosition: () => this.player.position,
+      zone: () => this.zone?.state(this.matchTimeMs) ?? null,
       cameraBox: () => this.camera.getBoundingBox(),
       // The moving layer is held longer on a machine that is missing frames.
       // A dot that steps instead of sliding is a cheap thing to trade for a

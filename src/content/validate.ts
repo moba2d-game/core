@@ -1328,6 +1328,25 @@ function checkMinionRoster(
   }
 }
 
+/** `MapSummary.ice` — see `IceTuning`. Absent is fine; present must make sense. */
+function checkIce(ice: unknown, name: string, errors: string[]): void {
+  if (ice === undefined) return;
+  if (!isObject(ice)) {
+    errors.push(`${name}.ice: must be an object`);
+    return;
+  }
+  if (ice.everywhere !== undefined && typeof ice.everywhere !== 'boolean') {
+    errors.push(`${name}.ice.everywhere: must be true or false`);
+  }
+  for (const key of ['accelMs', 'frictionMs']) {
+    const value = ice[key];
+    if (value === undefined) continue;
+    if (!isFiniteNumber(value) || value <= 0) {
+      errors.push(`${name}.ice.${key}: must be a positive number of milliseconds`);
+    }
+  }
+}
+
 /**
  * The zone list — see `TerrainZone` for what a zone is and is not.
  *
@@ -1375,6 +1394,9 @@ function checkZones(zones: unknown, name: string, errors: string[]): void {
       } else if (zone.speedMultiplier < 0) {
         errors.push(`${path}.speedMultiplier: must not be negative`);
       }
+    }
+    if (zone.ice !== undefined && typeof zone.ice !== 'boolean') {
+      errors.push(`${path}.ice: must be true or false`);
     }
     if (!isObject(zone.render) || typeof zone.render.fill !== 'string' || zone.render.fill === '') {
       errors.push(`${path}.render.fill: must be a non-empty colour string`);
@@ -1584,6 +1606,7 @@ function checkMap(map: unknown, index: number, errors: string[]): void {
   // Summoner's Rift's own numbers were never validated at all — the same
   // shape of hole this function's own header records for the terrain half.
   if (map.tuning !== undefined) checkMapTuning(map.tuning, name, errors);
+  checkIce(map.ice, name, errors);
 
   // `geometry` is a `MapGeometrySource`: a plain object, checked in full
   // below, or a loader — see `checkMapGeometry`'s own header for why a loader

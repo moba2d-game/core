@@ -669,7 +669,10 @@ export function createHudInteractions(game: Game): HudInteractions {
       const subject = shopSubject();
       if (!subject) return false;
       // A cheat's subject is never "at the fountain" and never needs to be.
-      return subject.mode === 'CHEAT' || atOwnFountain(subject.champion, game);
+      // Death satisfies the location rule, exactly as `ItemShop.refusalFor`
+      // says — without it the panel warned a dead player off a purchase the
+      // shop would have made.
+      return subject.mode === 'CHEAT' || subject.champion.isDead || atOwnFountain(subject.champion, game);
     },
 
     closeShop(): void {

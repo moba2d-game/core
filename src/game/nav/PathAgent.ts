@@ -104,6 +104,8 @@ export default class PathAgent {
 
   private replanCooldownMs = 0;
   private pathCheckCooldownMs: number;
+  /** `NavGrid.revision` when the running plan was committed. */
+  private planRevision = 0;
   /**
    * How far the goal was when the running plan was made. A route that stops
    * short is only worth re-planning if walking it actually closed the gap —
@@ -127,6 +129,15 @@ export default class PathAgent {
   }
 
   /** The point the unit is currently walking at, or null when it has no route. */
+  /**
+   * Whether the unit is on the last stretch toward its goal (or has no route).
+   * Ice brakes only on the final stretch: an intermediate corner must not slow
+   * a unit that is about to turn onto the next one.
+   */
+  get isFinalLeg(): boolean {
+    return this.state !== 'FOLLOWING' || this.waypointIndex + 2 >= this.waypoints.length;
+  }
+
   get currentWaypoint(): { x: number; y: number } | null {
     if (this.state !== 'FOLLOWING') return null;
     if (this.waypointIndex + 1 >= this.waypoints.length) return null;
@@ -292,6 +303,23 @@ export default class PathAgent {
    */
   update(deltaMs: number): void {
     if (this.replanCooldownMs > 0) this.replanCooldownMs -= deltaMs;
+
+    // The map itself changed under the plan (`NavGrid.setBlocker`: a bridge
+    // fell, or came back). A walk or route made before it may run straight
+    // into the gap — the unit is shoved back off it and walks in again,
+    // forever — and a unit that gave up may now have a way. Re-plan now,
+    // past the throttle: this happens a few times a match, not per frame.
+    if (
+      this.hasGoal &&
+      this.navigation.enabled &&
+      this.state !== 'IDLE' &&
+      this.state !== 'PENDING' &&
+      this.planRevision !== this.gridRevision()
+    ) {
+      this.replanCooldownMs = 0;
+      this.plan();
+      if (this.state !== 'FOLLOWING') return;
+    }
     if (this.state !== 'FOLLOWING') return;
 
     const { position, destination } = this.host;
@@ -394,9 +422,15 @@ export default class PathAgent {
    * plan belongs to.
    */
   private commitGoal(distance: number): void {
+    this.planRevision = this.gridRevision();
     this.planStartDistance = distance;
     this.planGoalX = this.goalX;
     this.planGoalY = this.goalY;
+  }
+
+  /** The grid's blocker revision; 0 for a navigation double without one. */
+  private gridRevision(): number {
+    return this.navigation.grid?.revision ?? 0;
   }
 
   /**

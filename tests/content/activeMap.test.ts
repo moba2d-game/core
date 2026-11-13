@@ -75,6 +75,13 @@ describe('joining a map summary to its geometry', () => {
     expect('lanes' in activeMapOf(summary(), geometry())).toBe(false);
   });
 
+  /** An ice map shipped `zones`, and the join dropped them: nothing slid in a real match. */
+  it('carries terrain zones when the map has them, and leaves them absent otherwise', () => {
+    const zones = [{ kind: 'ice', polygon: [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 0, y: 10 }] }];
+    expect(activeMapOf(summary(), geometry({ zones } as never)).zones).toBe(zones);
+    expect('zones' in activeMapOf(summary(), geometry())).toBe(false);
+  });
+
   /** Nothing a pack invents may reach the match by riding along. */
   it('lets no unknown key through at all', () => {
     const active = activeMapOf(summary(), geometry({ authoring: { strokes: 900 } }));

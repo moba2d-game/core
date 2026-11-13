@@ -68,6 +68,8 @@ export default class Dash extends Buff {
    */
   unstoppable = false;
 
+  override overridesMovement = true;
+
   statusFlagsToEnable = StatusFlags.Ghosted;
 
   /**

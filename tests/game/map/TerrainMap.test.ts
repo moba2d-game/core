@@ -15,6 +15,7 @@ import { stubGameGlobals } from '../fixtures';
 import TerrainMap from '../../../src/game/gameObject/map/TerrainMap';
 import TerrainType from '../../../src/game/enums/TerrainType';
 import type { ActiveMap } from '../../../src/content/ContentPack';
+import { Rectangle } from '../../../src/libs/quadtree';
 
 const activeMap = (size: number): ActiveMap => ({
   id: 'test-map',
@@ -117,5 +118,28 @@ describe('TerrainMap', () => {
     const second = new TerrainMap({}, activeMap(8_000));
     expect(first.quadtree.bounds.w).toBe(1_600);
     expect(second.quadtree.bounds.w).toBe(8_000);
+  });
+});
+
+describe('TerrainMap.draw and MapSummary.paintsOwnTerrain', () => {
+  const drawCounting = (paintsOwnTerrain?: boolean): number => {
+    let vertices = 0;
+    for (const name of ['push', 'pop', 'fill', 'stroke', 'strokeWeight', 'noStroke', 'beginShape', 'endShape']) {
+      vi.stubGlobal(name, vi.fn());
+    }
+    vi.stubGlobal('vertex', vi.fn(() => vertices++));
+    const game = { camera: { getBoundingBox: () => new Rectangle({ x: 0, y: 0, w: 6_400, h: 6_400 }) } };
+    const terrainMap = new TerrainMap(game, { ...activeMap(6_400), paintsOwnTerrain });
+    terrainMap.rippleEffect = { draw: vi.fn() };
+    terrainMap.draw();
+    return vertices;
+  };
+
+  it('fills every obstacle in view by default', () => {
+    expect(drawCounting()).toBe(8);
+  });
+
+  it('fills none of them when the pack paints its own terrain', () => {
+    expect(drawCounting(true)).toBe(0);
   });
 });

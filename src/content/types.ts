@@ -99,6 +99,7 @@ export type {
   EconomyTuning,
   FountainStats,
   FountainTuning,
+  IceTuning,
   LaneDefinition,
   MapDefinition,
   MapGeometry,

@@ -126,6 +126,7 @@ const TAG_ICON: Record<AnnouncementKind, string> = {
   multi: 'fa-solid fa-bolt',
   streak: 'fa-solid fa-fire',
   shutdown: 'fa-solid fa-fire-extinguisher',
+  bounty: 'fa-solid fa-sack-dollar',
 };
 
 /** The letter under a portrait while its image is still on its way from a pack's host. */

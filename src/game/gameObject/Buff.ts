@@ -48,6 +48,13 @@ export default class Buff {
   name = this.constructor.name;
 
   /**
+   * True for a buff that moves its owner's body itself (a dash, a knockback).
+   * Icy ground leaves such a unit's movement exactly as it was: see
+   * `AttackableUnit.moveOnIce`.
+   */
+  overridesMovement = false;
+
+  /**
    * Whether damage this buff deals is amplified by its owner's
    * `Stats.abilityPower` — inherited, once, from whatever was running when the
    * buff was constructed.

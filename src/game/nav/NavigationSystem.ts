@@ -1,4 +1,4 @@
-import NavGrid, { NAV_CELL_SIZE, type NavPoint } from './NavGrid';
+import NavGrid, { NAV_CELL_SIZE, type NavBlocker, type NavPoint } from './NavGrid';
 import PathFinder, { NAV_MAX_NODES_PER_SEARCH, type PathResult } from './PathFinder';
 import type PathAgent from './PathAgent';
 
@@ -158,6 +158,15 @@ export default class NavigationSystem {
   private frameSearches = 0;
   private frameNodes = 0;
 
+  /**
+   * Opens or closes a rectangle of map terrain mid-match (`NavGrid.setBlocker`):
+   * a collapsed bridge, a raised gate. Every route through it is re-planned on
+   * its agent's next frame. A pack reaches this as `game.navigation`.
+   */
+  setBlocker(id: string, rect: NavBlocker | null): boolean {
+    return this.grid.setBlocker(id, rect);
+  }
+
   readonly stats: NavigationStats;
 
   constructor(
@@ -166,7 +175,11 @@ export default class NavigationSystem {
     cellSize: number = NAV_CELL_SIZE,
     cacheKey?: string
   ) {
-    this.grid = buildGrid(wallPolygons, mapSize, cellSize, cacheKey);
+    // A cached grid is every match's on this map; this match gets its own copy
+    // so a blocker (`setBlocker`) it sets never leaks into the next one. A
+    // memcpy of the field, ~0.1ms, against the 81ms the cache saves.
+    const built = buildGrid(wallPolygons, mapSize, cellSize, cacheKey);
+    this.grid = cacheKey === undefined ? built : built.clone();
     this.finder = new PathFinder(this.grid);
     this.stats = {
       buildMs: this.grid.buildMs,

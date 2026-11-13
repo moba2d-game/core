@@ -35,7 +35,10 @@ const hud = inject<HudInteractions>('hud')!;
 <template>
   <div class="spectate-bar" :class="{ touch }" id="spectate-bar">
     <span class="spectate-revive">
-      Hồi sinh sau <strong id="spectate-revive-seconds">{{ reviveAfter }}</strong>s
+      <template v-if="reviveAfter < 0">Đã bị loại</template>
+      <template v-else
+        >Hồi sinh sau <strong id="spectate-revive-seconds">{{ reviveAfter }}</strong>s</template
+      >
     </span>
     <!-- The practice room's retry: back to the newest save point without
          waiting the clock out. Same pill as the ally control beside it. -->

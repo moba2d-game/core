@@ -22,6 +22,7 @@ import type {
   ChampionTuning,
   EconomyTuning,
   FountainStats,
+  IceTuning,
   MapTuning,
   MonsterScale,
   MonsterTuning,
@@ -438,4 +439,24 @@ export function resolveTerrainTuning(tuning: MapTuning | undefined): ResolvedTer
   const bush = Math.max(0, num(terrain.bush?.speedMultiplier, 1));
   const water = Math.max(0, num(terrain.water?.speedMultiplier, 1));
   return { bush, water, affectsSpeed: bush !== 1 || water !== 1 };
+}
+
+// --------------------------------------------------------------------- ice
+
+export const DEFAULT_ICE_ACCEL_MS = 350;
+export const DEFAULT_ICE_FRICTION_MS = 800;
+
+export interface ResolvedIce {
+  everywhere: boolean;
+  accelMs: number;
+  frictionMs: number;
+}
+
+/** Floors the time constants: 0 would divide by zero and mean "no ice" anyway. */
+export function resolveIce(ice: IceTuning | undefined): ResolvedIce {
+  return {
+    everywhere: ice?.everywhere === true,
+    accelMs: Math.max(1, num(ice?.accelMs, DEFAULT_ICE_ACCEL_MS)),
+    frictionMs: Math.max(1, num(ice?.frictionMs, DEFAULT_ICE_FRICTION_MS)),
+  };
 }

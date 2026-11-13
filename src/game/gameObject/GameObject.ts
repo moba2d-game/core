@@ -58,6 +58,10 @@ export interface GameObjectRuntimeContext extends GameObjectGameContext {
    * own, so read it as `?? 0` rather than asserting it away.
    */
   matchTimeMs?: number;
+  /** Truy Nã: extra gold `killer` earns for `victim`'s head; absent = 0. */
+  bountyExtra?(victim: AttackableUnit, killer: AttackableUnit): number;
+  /** Truy Nã: the wanted champion right now, if any. */
+  wantedChampion?(): AttackableUnit | null;
   /**
    * The active map's own numbers, if it stated any — `MapSummary.tuning`,
    * held by `Game` and read live by whatever needs it at the moment it needs
@@ -69,6 +73,8 @@ export interface GameObjectRuntimeContext extends GameObjectGameContext {
    * `matchTimeMs` beside it, because a headless context has no map.
    */
   mapTuning?: MapTuning;
+  /** Non-null only in the poison-zone mode (`game/zone/`); champions stay down while it is set. */
+  readonly zone?: object | null;
   /**
    * `Game.matchSeed` — the one random number this match agrees on, host and
    * client alike (`game/matchSeed.ts`).
@@ -205,6 +211,15 @@ export default class GameObject {
 
   onAdded() {}
   onRemoved() {}
+  /**
+   * The match is being torn down (`Game.destroy`): restart, exit to the menu,
+   * a scene change. Objects are *not* removed one by one then, so
+   * `onRemoved` never runs — anything that reaches outside the canvas (a pack's
+   * DOM banner or end card, a listener on `window`) lets go of it here, or it
+   * outlives the match and sits over the next one. No gameplay: the world is
+   * gone.
+   */
+  onMatchTeardown() {}
 
   update() {}
   draw() {}

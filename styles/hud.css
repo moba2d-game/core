@@ -3299,6 +3299,11 @@ button.practice-roster-item {
   color: #fff;
 }
 
+.kill-feed-badge.badge-bounty {
+  background: linear-gradient(#ffd75e, #c98a00);
+  color: #2b1d00;
+}
+
 /* A new callout drops in from the top edge; the row's own `opacity` handles the end. */
 .kill-feed-enter-active {
   animation: kill-feed-drop 0.32s cubic-bezier(0.2, 1.3, 0.4, 1);

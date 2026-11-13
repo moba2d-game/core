@@ -116,8 +116,10 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onOutsidePoint
          the one they press. It comes and goes; nothing under it may. -->
     <div v-if="showRevive" class="death-recap-live">
       <span class="death-recap-revive">
-        Hồi sinh sau <b id="recap-revive-seconds">{{ reviveAfter }}</b
-        >s
+        <template v-if="reviveAfter < 0">Đã bị loại — hết mạng</template>
+        <template v-else
+          >Hồi sinh sau <b id="recap-revive-seconds">{{ reviveAfter }}</b>s</template
+        >
       </span>
       <!-- The practice room's own answer to dying: back to the last save
            point, this instant. Rendered only when one exists to go to. -->

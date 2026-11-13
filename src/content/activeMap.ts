@@ -47,4 +47,7 @@ export const activeMapOf = (summary: MapSummary, geometry: MapGeometry): ActiveM
   // Absent on a map with no lanes, and absent must stay absent: `lanes: undefined`
   // is not the same shape as no `lanes` key to code that tests for the field.
   ...(geometry.lanes === undefined ? {} : { lanes: geometry.lanes }),
+  // Ice and other `TerrainZone`s: dropping them here left `TerrainMap.zones`
+  // empty in a real match, so an ice map never slid although its tests passed.
+  ...(geometry.zones === undefined ? {} : { zones: geometry.zones }),
 });

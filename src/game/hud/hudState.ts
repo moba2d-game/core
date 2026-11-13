@@ -824,7 +824,12 @@ function buildScoreboard(game: any, player: any): ScoreboardDisplay {
       gold: Math.floor(unit.wallet?.balance ?? 0),
       damage: Math.round(unit.tally.damageDealt ?? 0),
       streak: announcer?.streakOf(unit) ?? 0,
-      reviveAfter: unit.isDead ? Math.ceil((unit.deathData?.reviveAfter ?? 0) / 1000) : 0,
+      // -1: out of a zone match for good (a skull, not a 3600s countdown).
+      reviveAfter: (unit as any).zoneEliminated
+        ? -1
+        : unit.isDead
+          ? Math.ceil((unit.deathData?.reviveAfter ?? 0) / 1000)
+          : 0,
       items: buildItems(unit),
     };
     const team = byTeam.get(unit.teamId);
@@ -1039,7 +1044,8 @@ export function computeHudState(game: Game | undefined | null): HudState | null 
   return {
     avatar: player.avatar?.path || '',
     isDead: player.isDead,
-    reviveAfter: ~~((player.deathData?.reviveAfter ?? 0) / 1000),
+    // -1: out of a zone match for good; the panels say so instead of counting.
+    reviveAfter: (player as any).zoneEliminated ? -1 : ~~((player.deathData?.reviveAfter ?? 0) / 1000),
     spectating: player.isDead ? ((game as any)?.deathCamera?.watching?.name ?? null) : null,
     stats: buildStats(player),
     spells: buildSpells(player),

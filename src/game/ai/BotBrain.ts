@@ -14,6 +14,7 @@ import {
   type BlackboardHost,
   type SeenEnemy,
   type TeamView,
+  type GoalArea,
   type CampState,
   CAMP_MAX_TTK_MS,
   CAMP_RISK_SHARE,
@@ -60,6 +61,7 @@ export type Posture =
   | 'RETREAT'
   | 'RECOVER'
   | 'DISENGAGE'
+  | 'REACH_AREA'
   | 'FIGHT'
   | 'SEARCH'
   | 'ENGAGE'
@@ -78,6 +80,20 @@ export const JUNGLE_ROUTE_PX = 3200;
 /** How far from an ally a focus target counts as "a fight worth joining". */
 export const ASSIST_RANGE = 700;
 export const ROAM_RADIUS = 500;
+/** With a goal area: how far from an ally a focus target still counts as a fight to join. */
+export const ASSIST_RANGE_GOAL = 1400;
+/** With a goal area: a bot further than this from its team's centroid regroups instead of advancing. */
+export const GROUP_PX = 300;
+/** With a goal area: how far ahead of the team's centroid one advance step is aimed. */
+export const ADVANCE_STEP_PX = 400;
+/** With a goal area: the team is "there" when its centroid is this close to the aim. */
+export const ADVANCE_ARRIVE_PX = 220;
+/** With a goal area: a refuge is pushed away from an enemy seen within this. */
+export const REFUGE_DANGER_PX = 900;
+/** Bots aim at points no further out than this share of the area's radius. */
+export const GOAL_AIM_SHARE = 0.6;
+/** A sighting older than this no longer steers a refuge. */
+const MEMORY_REFUGE_MS = 4000;
 /**
  * How close our own wave has to be to a turret before a bot will hit it.
  *
@@ -727,6 +743,13 @@ export class BotBrain {
     const tower = this.threateningTurret(view);
     if (tower && !this.divingAllowed(view, tower, target)) return 'DISENGAGE';
 
+    // Outside the area the match wants us in (the poison zone's safe circle) is
+    // urgent, above even the health retreat: RETREAT walks to a fountain, and a
+    // fountain outside the circle is the poison. `retreatPoint()` is also
+    // goal-aware, so the two agree about where "safe" is.
+    this.goalView = view.goal ?? null;
+    if (view.goal && this.outsideGoal(view.goal)) return 'REACH_AREA';
+
     if (this.recovering) {
       if (healthPct > RECOVER_HEALTH_PCT && manaPct > RECOVER_MANA_PCT) {
         this.recovering = false;
@@ -980,9 +1003,12 @@ export class BotBrain {
    * the order the bot is still carrying.
    */
   private safely(view: TeamView, target: AttackableUnit | null, to: Vec2): Vec2 {
+    // A goal area is a wall as well: no walk here may end outside it, or the
+    // REACH_AREA rule and the walk undo each other four times a second.
+    const held = view.goal ? this.withinGoal(view.goal, to) : to;
     return clampToSafeApproach(
       this.owner.position,
-      to,
+      held,
       this.forbiddenTurrets(view, target),
       this.bodyRadius,
       TURRET_KEEP_OUT_PX
@@ -1136,7 +1162,14 @@ export class BotBrain {
       if (ally === this.owner) continue;
       const dx = focus.position.x - ally.position.x;
       const dy = focus.position.y - ally.position.y;
-      if (Math.hypot(dx, dy) <= ASSIST_RANGE) return focus;
+      const away = Math.hypot(dx, dy);
+      if (away <= ASSIST_RANGE) return focus;
+      // With a goal area there is nothing else to do, so an ally who is
+      // actually fighting pulls the others in from further out.
+      if (view.goal && away <= ASSIST_RANGE_GOAL) {
+        const order = ally.basicAttack?.target;
+        if (order?.killCredit === 'champion') return focus;
+      }
     }
     return null;
   }
@@ -1148,6 +1181,89 @@ export class BotBrain {
    * `decidePosture`.
    */
   retreatPoint(): Vec2 | null {
+    const goal = this.goalView;
+    if (goal) {
+      const usual = this.usualRetreatPoint();
+      // Home is only a refuge when it is inside the area; otherwise it is the poison.
+      if (usual && !this.pointOutsideGoal(goal, usual)) return usual;
+      return this.goalRefuge(goal);
+    }
+    return this.usualRetreatPoint();
+  }
+
+  /** The goal area of the last evaluated view, for `retreatPoint()` which is handed no view. */
+  private goalView: GoalArea | null = null;
+
+  private pointOutsideGoal(goal: GoalArea, at: Vec2): boolean {
+    return Math.hypot(at.x - goal.x, at.y - goal.y) > goal.r - this.goalMargin(goal);
+  }
+
+  /** Body plus a slice of the area: the shrink is still coming, and an edge is not a place to stand. */
+  private goalMargin(goal: GoalArea): number {
+    return this.bodyRadius + Math.min(150, goal.r * 0.2);
+  }
+
+  private outsideGoal(goal: GoalArea): boolean {
+    return this.pointOutsideGoal(goal, this.owner.position);
+  }
+
+  /** `to`, pulled back onto the disc bots may aim at (a little inside the margin). */
+  private withinGoal(goal: GoalArea, to: Vec2): Vec2 {
+    const limit = Math.max(50, goal.r - this.goalMargin(goal) - 50);
+    const dx = to.x - goal.x;
+    const dy = to.y - goal.y;
+    const away = Math.hypot(dx, dy);
+    if (away <= limit) return to;
+    return { x: goal.x + (dx / away) * limit, y: goal.y + (dy / away) * limit };
+  }
+
+  /** The way back in: the point `GOAL_AIM_SHARE` of the way out on the line from the centre to this bot. */
+  private pointInsideGoal(goal: GoalArea): Vec2 {
+    const dx = this.owner.position.x - goal.x;
+    const dy = this.owner.position.y - goal.y;
+    const away = Math.hypot(dx, dy) || 1;
+    const reach = goal.r * GOAL_AIM_SHARE;
+    return { x: goal.x + (dx / away) * reach, y: goal.y + (dy / away) * reach };
+  }
+
+  /**
+   * Somewhere safe to be hurt inside the area: next to the healthiest company,
+   * shoved away from any enemy the team has seen lately. Never a fountain
+   * outside the circle.
+   */
+  private goalRefuge(goal: GoalArea): Vec2 {
+    const view = this.lastView;
+    let x = goal.x;
+    let y = goal.y;
+    let n = 0;
+    if (view) {
+      let ax = 0;
+      let ay = 0;
+      for (const ally of view.allies) {
+        if (ally === this.owner || ally.isDead) continue;
+        ax += ally.position.x;
+        ay += ally.position.y;
+        n += 1;
+      }
+      if (n > 0) {
+        x = ax / n;
+        y = ay / n;
+      }
+      for (const seen of view.memory.values()) {
+        if (this.nowMs - seen.atMs > MEMORY_REFUGE_MS) continue;
+        const dx = x - seen.pos.x;
+        const dy = y - seen.pos.y;
+        const away = Math.hypot(dx, dy);
+        if (away >= REFUGE_DANGER_PX) continue;
+        const push = (REFUGE_DANGER_PX - away) / (away || 1);
+        x += dx * push;
+        y += dy * push;
+      }
+    }
+    return this.withinGoal(goal, { x, y });
+  }
+
+  private usualRetreatPoint(): Vec2 | null {
     const game = this.owner.game as {
       turrets?: { teamId?: unknown; isDead?: boolean; position: Vec2 }[];
       fountains?: { teamId?: unknown; position: Vec2 }[];
@@ -1599,6 +1715,14 @@ export class BotBrain {
         owner.basicAttack?.clear();
         owner.stopMovement();
         return;
+      case 'REACH_AREA': {
+        owner.basicAttack?.clear();
+        const goal = view.goal;
+        if (!goal) return;
+        const inside = this.pointInsideGoal(goal);
+        owner.navigateToWalkable(inside.x, inside.y);
+        return;
+      }
       case 'DISENGAGE': {
         owner.basicAttack?.clear();
         const tower = this.threateningTurret(view);
@@ -1681,6 +1805,10 @@ export class BotBrain {
       }
       default: {
         // ROAM: hang around the team rather than crossing the map alone.
+        if (view.goal) {
+          this.advanceAsTeam(view, view.goal);
+          return;
+        }
         if (owner.position.dist(owner.destination) >= owner.moveSpeed) return;
         const anchor = view.rally ?? this.retreatPoint();
         if (!anchor) {
@@ -1705,6 +1833,56 @@ export class BotBrain {
         owner.navigateToWalkable(wander.x, wander.y);
       }
     }
+  }
+
+  /**
+   * ROAM when the match names an area: advance together instead of idling.
+   *
+   * The team's centroid is the rally, so everyone steps toward the same aim (the
+   * newest remembered enemy, else the area's centre) from the same point, with a
+   * small per-bot offset. A bot that has drifted more than `GROUP_PX` from the
+   * centroid walks back to it first, which is what stops one bot going alone.
+   */
+  private advanceAsTeam(view: TeamView, goal: GoalArea): void {
+    const owner = this.owner;
+    const rally = view.rally ?? owner.position;
+    let aim: Vec2 = { x: goal.x, y: goal.y };
+    let freshest = Number.NEGATIVE_INFINITY;
+    for (const seen of view.memory.values()) {
+      if (seen.atMs > freshest) {
+        freshest = seen.atMs;
+        aim = seen.pos;
+      }
+    }
+    aim = this.withinGoal(goal, aim);
+    let to: Vec2;
+    if (Math.hypot(owner.position.x - rally.x, owner.position.y - rally.y) > GROUP_PX) {
+      to = rally;
+    } else {
+      const dx = aim.x - rally.x;
+      const dy = aim.y - rally.y;
+      const left = Math.hypot(dx, dy);
+      if (left <= ADVANCE_ARRIVE_PX) {
+        // There, and nobody to fight: mill about the aim as a group.
+        if (owner.position.dist(owner.destination) >= owner.moveSpeed) {
+          const angle = this.rng() * Math.PI * 2;
+          const radius = this.rng() * ROAM_RADIUS * 0.5;
+          to = { x: aim.x + Math.cos(angle) * radius, y: aim.y + Math.sin(angle) * radius };
+        } else return;
+      } else {
+        const step = Math.min(left, ADVANCE_STEP_PX);
+        const index = Math.max(0, view.allies.indexOf(owner));
+        const spread = (index / Math.max(1, view.allies.length)) * Math.PI * 2;
+        to = {
+          x: rally.x + (dx / left) * step + Math.cos(spread) * 70,
+          y: rally.y + (dy / left) * step + Math.sin(spread) * 70,
+        };
+      }
+    }
+    const held = this.safely(view, null, to);
+    // Only re-order when the aim has really moved; the rally drifts every tick.
+    if (Math.hypot(held.x - owner.destination.x, held.y - owner.destination.y) < 120) return;
+    owner.navigateToWalkable(held.x, held.y);
   }
 
   /**

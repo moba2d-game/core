@@ -371,6 +371,20 @@ export default class AttackableUnit extends GameObject {
    */
   terrainSpeedFactor = 1;
 
+  /**
+   * Standing on ice (`IceTuning`). Written each tick by `TerrainMap.updateIce`
+   * and only on a map that has ice, so it is false forever everywhere else and
+   * `move()` is the code it always was.
+   */
+  onIce = false;
+  /** Walking velocity on ice, px per tick. Zero off ice. */
+  iceVx = 0;
+  iceVy = 0;
+  /** The destination last steered at, and whether the unit has reached it. */
+  private iceGoalX = NaN;
+  private iceGoalY = NaN;
+  private iceArrived = false;
+
   avatar: AssetHandle | undefined;
   destination: p5.Vector;
   movementRevision = 0;
@@ -533,6 +547,7 @@ export default class AttackableUnit extends GameObject {
     // after it.
     this.pathAgent?.update(deltaTime);
     if (this.canMove) this.move();
+    else if (this.iceVx !== 0 || this.iceVy !== 0) this.iceVx = this.iceVy = 0;
 
     if (this.deathData) {
       this.deathData.reviveAfter -= deltaTime;
@@ -1678,13 +1693,15 @@ export default class AttackableUnit extends GameObject {
         // a corpse (`Champion.die` runs cleanup that is safe to repeat), and a
         // bounty paid on every one of those calls is an unbounded gold press
         // pointed at anything that keeps hitting a body.
-        credited.wallet?.earn(this.goldBounty);
+        // Truy Nã adds a head price on top; 0 outside that mode.
+        const pay = this.goldBounty + (this.game?.bountyExtra?.(this, credited) ?? 0);
+        credited.wallet?.earn(pay);
         // Over the **killer**, which is the opposite of every other combat
         // text — see `GOLD_TEXT_COLOR`. Guarded on a wallet as well as on the
         // bounty, so a minion that last-hits another minion does not float a
         // number for money it cannot hold.
-        if (credited.wallet && this.goldBounty > 0) {
-          CombatText.show(credited, 'gold', this.goldBounty, [...GOLD_TEXT_COLOR]);
+        if (credited.wallet && pay > 0) {
+          CombatText.show(credited, 'gold', pay, [...GOLD_TEXT_COLOR]);
         }
       }
       // The ledger is this life's. Cleared after everything that reads it, so
@@ -1737,6 +1754,7 @@ export default class AttackableUnit extends GameObject {
     this.pathAgent?.clear();
 
     const spawnPoint = this.game.randomSpawnPoint(this.teamId);
+    this.iceVx = this.iceVy = 0;
     this.position.set(spawnPoint.x, spawnPoint.y);
     this.destination.set(spawnPoint.x, spawnPoint.y);
     // The corpse and the fountain are the whole map apart: draw the respawn at
@@ -1769,6 +1787,11 @@ export default class AttackableUnit extends GameObject {
   }
 
   move() {
+    if (this.onIce) {
+      if (this.moveOnIce()) return true;
+    } else if (this.iceVx !== 0 || this.iceVy !== 0) {
+      this.iceVx = this.iceVy = 0;
+    }
     // Written out rather than as `p5.Vector.sub(...).normalize().mult(speed)`,
     // which allocated a vector per moving unit per frame. The arithmetic is
     // deliberately in p5's own order — normalize multiplies by `1 / len`, it
@@ -1788,6 +1811,92 @@ export default class AttackableUnit extends GameObject {
       this.position.x += dx * inverseDistance * speed;
       this.position.y += dy * inverseDistance * speed;
     }
+    return true;
+  }
+
+  /**
+   * One step of walking on ice: velocity lags toward the wanted velocity with
+   * time constant `accelMs` (steering) or `frictionMs` (nothing pulls the
+   * unit), so stopping and turning take time. Returns false when the unit is
+   * being moved by a dash or knockback, which keeps its exact old movement.
+   *
+   * Per unit of time, not per frame: the lag is solved exactly over `deltaTime`
+   * (`1 - exp(-dt / tau)`) and the distance covered is the exact integral of
+   * that lag, so the path is the same whatever the tick length.
+   *
+   * Steering brakes only on the final stretch to the goal (a route corner must
+   * not slow a unit that turns on it). "Arrived" means close (about one and a
+   * half steps) and slow, or a fresh order that starts that close (a stop); the
+   * unit then coasts, and once it has all but
+   * stopped it settles `destination` onto where it is, so nothing waiting for
+   * "destination reached" (BotBrain ROAM) waits forever.
+   */
+  private moveOnIce(): boolean {
+    if (this.buffs.some(buff => buff.overridesMovement)) {
+      this.iceVx = this.iceVy = 0;
+      return false;
+    }
+    const ice = (
+      this.game as { terrainMap?: { ice?: { accelMs: number; frictionMs: number } } } | undefined
+    )?.terrainMap?.ice;
+    if (!ice) return false;
+
+    const dt = deltaTime > 0 ? deltaTime : 1000 / 60;
+    const speed = this.moveSpeed;
+    const dx = this.destination.x - this.position.x;
+    const dy = this.destination.y - this.position.y;
+    const distance = Math.sqrt(dx * dx + dy * dy);
+
+    const finalLeg = !this.pathAgent || this.pathAgent.isFinalLeg;
+    const near = finalLeg && distance <= Math.max(speed * 1.5, 1);
+    if (this.destination.x !== this.iceGoalX || this.destination.y !== this.iceGoalY) {
+      // A fresh order already on top of the unit (a stop is one) means "do not
+      // pull me anywhere": it coasts. Otherwise it steers.
+      this.iceGoalX = this.destination.x;
+      this.iceGoalY = this.destination.y;
+      this.iceArrived = near;
+    } else if (!this.iceArrived && near && Math.hypot(this.iceVx, this.iceVy) <= speed * 0.1) {
+      // Eased in: close and slow, so it may settle.
+      this.iceArrived = true;
+    }
+
+    let targetX = 0;
+    let targetY = 0;
+    let tau = ice.frictionMs;
+    if (!this.iceArrived && distance > 0) {
+      tau = ice.accelMs;
+      // Brake as a spring toward the final goal: wanted speed shrinks with
+      // distance, so the unit eases in rather than orbiting its destination.
+      const wanted = finalLeg ? Math.min(speed, (distance * dt) / (2 * ice.accelMs)) : speed;
+      targetX = (dx / distance) * wanted;
+      targetY = (dy / distance) * wanted;
+    }
+
+    const decay = Math.exp(-dt / tau);
+    const carry = (tau / dt) * (1 - decay);
+    let vx = this.iceVx;
+    let vy = this.iceVy;
+    this.position.x += targetX + (vx - targetX) * carry;
+    this.position.y += targetY + (vy - targetY) * carry;
+    vx = targetX + (vx - targetX) * decay;
+    vy = targetY + (vy - targetY) * decay;
+
+    // A slow applied mid-slide takes effect at once rather than after the
+    // momentum has bled off.
+    const magnitude = Math.sqrt(vx * vx + vy * vy);
+    if (magnitude > speed) {
+      const scale = speed > 0 ? speed / magnitude : 0;
+      vx *= scale;
+      vy *= scale;
+    }
+    if (this.iceArrived && magnitude < speed * 0.02) {
+      vx = vy = 0;
+      this.destination.set(this.position.x, this.position.y);
+      this.iceGoalX = this.destination.x;
+      this.iceGoalY = this.destination.y;
+    }
+    this.iceVx = vx;
+    this.iceVy = vy;
     return true;
   }
 
@@ -1829,6 +1938,7 @@ export default class AttackableUnit extends GameObject {
   }
 
   teleportTo(x: number, y: number) {
+    this.iceVx = this.iceVy = 0;
     this.markDisplaced();
     this.pathAgent?.clear();
     this.position.set(x, y);

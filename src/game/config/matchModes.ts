@@ -45,7 +45,9 @@ import { MatchTeam, type MatchTeamId } from './MatchTeams';
  * `PregameConfig.ts` is.
  */
 
-export type MatchModeId = 'classic' | 'blitz' | 'urf' | 'brawl' | 'duel' | 'war';
+export type MatchModeId =
+  | 'classic' | 'blitz' | 'urf' | 'brawl' | 'duel' | 'war'
+  | 'twins' | 'bounty' | 'zone' | 'events';
 
 export interface MatchMode {
   readonly id: MatchModeId;
@@ -63,8 +65,16 @@ export interface MatchMode {
   readonly bots?: number;
   /** Every kit — the player's too — is rolled at random, ignoring picks. */
   readonly allRandom?: boolean;
+  /** Each team rolls one champion and every member plays it. Read by `planMatchKits`. */
+  readonly twins?: boolean;
+  /** The longest kill run (>= 3) is wanted: extra gold to its killer. See `combat/Bounty.ts`. */
+  readonly bounty?: boolean;
   /** Laid over the map's own numbers at boot. See `mergeTuning`. */
   readonly tuning?: MapTuning;
+  /** A shrinking poison zone, no revives, last team standing wins. See `game/zone/`. */
+  readonly zone?: boolean;
+  /** Random world events fire on a schedule (`game/events/`). */
+  readonly randomEvents?: boolean;
 }
 
 export const DEFAULT_MATCH_MODE_ID: MatchModeId = 'classic';
@@ -142,6 +152,44 @@ export const MATCH_MODES: readonly MatchMode[] = Object.freeze([
     // Nine, not ten: the player is the tenth. `initialBotTeam` alternates
     // Red first, so nine bots beside a Blue player is five Red and five Blue.
     bots: 9,
+  },
+  {
+    id: 'twins',
+    name: 'Sinh Đôi',
+    blurb: 'Mỗi đội cùng một tướng ngẫu nhiên, ba chọi ba.',
+    rules: CLASSIC_RULES,
+    world: CLASSIC_WORLD,
+    // Five bots beside a Blue player: three Red, two Blue, the player the third.
+    bots: 5,
+    twins: true,
+  },
+  {
+    id: 'bounty',
+    name: 'Truy Nã',
+    blurb: 'Chuỗi hạ gục từ 3 bị treo thưởng: hạ hắn để nhận thêm vàng.',
+    rules: CLASSIC_RULES,
+    world: CLASSIC_WORLD,
+    bots: 7,
+    bounty: true,
+  },
+  {
+    id: 'zone',
+    name: 'Vùng Độc',
+    blurb: 'Vòng độc thu hẹp, mỗi người 3 mạng: đội cuối cùng còn trụ lại thắng.',
+    rules: { cooldownReductionPercent: 0, manaFree: false, recall: false },
+    world: { jungle: false, minions: false },
+    bots: 5,
+    zone: true,
+    tuning: { economy: { startingGold: 1400, passiveGoldPerSecond: 5 } },
+  },
+  {
+    id: 'events',
+    name: 'Sự Kiện',
+    blurb: 'Mỗi 15 giây một sự kiện ngẫu nhiên: mưa vàng, thiên thạch, gió lốc...',
+    rules: CLASSIC_RULES,
+    world: CLASSIC_WORLD,
+    bots: 3,
+    randomEvents: true,
   },
 ]);
 
@@ -240,6 +288,8 @@ export function modeDrift(mode: MatchMode, knobs: ModeKnobs): boolean {
 export function describeMode(mode: MatchMode): string[] {
   const lines: string[] = [];
   if (mode.allRandom) lines.push('Tướng ngẫu nhiên cho tất cả');
+  if (mode.twins) lines.push('Mỗi đội cùng một tướng');
+  if (mode.bounty) lines.push('Truy nã chuỗi hạ gục từ 3');
   if (mode.rules.cooldownReductionPercent > 0) {
     lines.push(`Giảm hồi chiêu ${mode.rules.cooldownReductionPercent}%`);
   }
@@ -247,7 +297,9 @@ export function describeMode(mode: MatchMode): string[] {
   if (!mode.rules.recall) lines.push('Không hồi thành');
   if (!mode.world.jungle) lines.push('Không quái rừng');
   if (!mode.world.minions) lines.push('Không lính');
+  if (mode.zone) lines.push('Vùng độc thu hẹp, 3 mạng');
   if (mode.bots !== undefined) lines.push(`${mode.bots} bot`);
+  if (mode.randomEvents) lines.push('Sự kiện ngẫu nhiên mỗi 15 giây');
   return lines;
 }
 

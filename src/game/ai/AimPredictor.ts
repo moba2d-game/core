@@ -17,6 +17,10 @@ export interface Movable {
   position: Vec2;
   destination: Vec2;
   moveSpeed: number;
+  /** Icy ground: the body's real velocity (px per tick) is momentum, not intent. */
+  onIce?: boolean;
+  iceVx?: number;
+  iceVy?: number;
 }
 
 export interface AimOptions {
@@ -39,6 +43,7 @@ export interface AimOptions {
  * and it needs no per-target state to compute.
  */
 export function targetVelocity(target: Movable): Vec2 {
+  if (target.onIce) return { x: target.iceVx ?? 0, y: target.iceVy ?? 0 };
   const dx = target.destination.x - target.position.x;
   const dy = target.destination.y - target.position.y;
   const remaining = Math.hypot(dx, dy);

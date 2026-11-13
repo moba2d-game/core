@@ -1,4 +1,5 @@
 import AssetManager, { type AssetHandle, type AssetKey } from '@/managers/AssetManager';
+import { ZONE_LIVES, zoneReviveAfter, zoneRevivePoint } from '@/game/zone/zoneRules';
 import {
   resolveChampionRevive,
   resolveChampionScale,
@@ -1024,7 +1025,27 @@ export default class Champion extends AttackableUnit {
     return true;
   }
 
+  /** Truy Nã: one gold text line above the bar of the wanted champion. Cheap: a single fillText. */
+  private drawWantedMark(x: number, y: number, k: number): void {
+    const ctx = drawingContext;
+    ctx.save();
+    ctx.font = `bold ${13 * k}px sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'alphabetic';
+    ctx.lineWidth = 3 * k;
+    ctx.strokeStyle = 'rgba(40,24,0,0.9)';
+    ctx.fillStyle = '#ffd23c';
+    const label = 'TRUY NÃ';
+    ctx.strokeText(label, x, y);
+    ctx.fillText(label, x, y);
+    ctx.restore();
+  }
+
   drawHealthBar(compact = false) {
+    if (!this.isDead && this.game?.wantedChampion?.() === this) {
+      const k0 = this.game?.camera?.constantSize?.(1) ?? 1;
+      this.drawWantedMark(this.position.x, this.position.y - this.animatedValues.displaySize / 2 - 62 * k0, k0);
+    }
     let pos = this.position;
     let { displaySize: size, alpha } = this.animatedValues;
     let health = this.stats.health.value;
@@ -1214,7 +1235,7 @@ export default class Champion extends AttackableUnit {
       textSize(13 * k);
       if (this.deathData) {
         text(
-          `Hồi Sinh Sau ${~~(this.deathData.reviveAfter / 1000)}...`,
+          this.zoneEliminated ? 'Bị loại' : `Hồi Sinh Sau ${~~(this.deathData.reviveAfter / 1000)}...`,
           pos.x,
           topleft.y + barHeight + 8 * k
         );
@@ -1271,6 +1292,33 @@ export default class Champion extends AttackableUnit {
     pop();
   }
 
+  /** Deaths in the poison-zone mode; `ZONE_LIVES` of them is out. */
+  zoneDeaths = 0;
+
+  /** Out of the zone match for good: down, with no life left. */
+  get zoneEliminated(): boolean {
+    return this.isDead && this.zoneDeaths >= ZONE_LIVES;
+  }
+
+  /** Lives left in the poison-zone mode. */
+  get zoneLivesLeft(): number {
+    return Math.max(0, ZONE_LIVES - this.zoneDeaths);
+  }
+
+  respawn() {
+    super.respawn();
+    const zone = this.game?.zone as
+      | { state(timeMs: number): { current: { x: number; y: number; r: number } } }
+      | null
+      | undefined;
+    if (!zone) return;
+    // A fountain the circle has left behind would kill on arrival.
+    const point = zoneRevivePoint(this.position, zone.state(this.game?.matchTimeMs ?? 0).current);
+    this.position.set(point.x, point.y);
+    this.destination.set(point.x, point.y);
+    this.snapRenderOrigin();
+  }
+
   die(deathData: UnitDeathData) {
     // How long this champion stays down is the map's to say, and it can grow
     // with match time (`ChampionTuning.reviveCurve`), so it is resolved *at
@@ -1282,6 +1330,14 @@ export default class Champion extends AttackableUnit {
       this.game?.mapTuning,
       this.game?.matchTimeMs ?? 0
     );
+
+    // The poison-zone mode: `ZONE_LIVES` lives, a short revive between them,
+    // then down for good (finite, because a saved moment cannot store
+    // Infinity — `ClientSession` does the same).
+    if (this.game?.zone) {
+      this.zoneDeaths++;
+      deathData.reviveAfter = zoneReviveAfter(this.zoneDeaths);
+    }
 
     // The ledger is `AttackableUnit.die`'s: it is the one place that knows
     // whether a death was already counted, and a turret's kill is a kill.

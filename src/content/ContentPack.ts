@@ -1093,6 +1093,59 @@ export interface MapSummary {
   factions: Faction[];
   /** This map's own numbers. Absent — or any field absent — means core's. */
   tuning?: MapTuning;
+  /**
+   * The pack paints this map's walls, bushes and water itself, so core must
+   * not fill them first.
+   *
+   * Core's terrain art is a 7px-stroked polygon per obstacle in view. Under a
+   * pack's own scenery that is pure overdraw: on a map whose sea is one wall
+   * the full width of the map, it was a second full-screen layer every frame
+   * that the pack then painted over. Collision, sight, navigation and bush
+   * concealment are untouched — only `TerrainMap.draw`'s obstacle fills stop.
+   * Zones still paint. An older core ignores the field and draws as before.
+   */
+  paintsOwnTerrain?: boolean;
+  /**
+   * Icy ground. See `IceTuning`. Absent means no ice anywhere, unless a
+   * `TerrainZone` says `ice: true` (then the zone uses core's defaults).
+   *
+   * A sibling of `paintsOwnTerrain` and **not** a `tuning.terrain` entry, on
+   * purpose: `checkMapTuning` rejects keys it does not know, so an older core
+   * would refuse the whole map. Here an older core never looks, ignores the
+   * field, and the map plays as ordinary ground.
+   */
+  ice?: IceTuning;
+}
+
+/**
+ * Ice: ground where a unit keeps its momentum.
+ *
+ * On ice a walking unit's velocity does not snap to its order. It accelerates
+ * toward the direction it wants with a time constant of `accelMs`, and when it
+ * has nothing to walk to (arrived, or stopped) it coasts and bleeds speed with
+ * a time constant of `frictionMs`. Stopping and turning therefore take time,
+ * and a unit stopped at full speed slides roughly `speed * frictionMs` px.
+ *
+ * - Both constants are **times, not per-frame factors**: the step is
+ *   `1 - exp(-dt / tau)`, so the slide is the same at 30 and 60 ticks per
+ *   second.
+ * - Only a unit's own *walking* is affected. Dashes and knockbacks (anything
+ *   extending `Dash`) move the body directly and are unchanged; a unit that
+ *   dashes starts from rest afterwards. A unit that cannot move (stun, root,
+ *   dead) loses its momentum at once.
+ * - Bots navigate as before: orders and routes are unchanged, a unit simply
+ *   brakes smoothly onto its final goal and settles within a few pixels of it
+ *   instead of snapping exactly onto it.
+ * - Which ground is icy: `everywhere` (the whole map), or every polygon of a
+ *   `TerrainZone` with `ice: true`. With neither, `ice` has no effect.
+ */
+export interface IceTuning {
+  /** Whole map is ice. Default false (only ice zones are). */
+  everywhere?: boolean;
+  /** Time constant (ms) of speeding up / turning toward the desired direction. Default 350. */
+  accelMs?: number;
+  /** Time constant (ms) of coasting to a halt when no order pulls the unit. Default 800. */
+  frictionMs?: number;
 }
 
 /**
@@ -1146,6 +1199,11 @@ export interface TerrainZone {
    * follow — see `TerrainMap.speedFactorAt`.
    */
   speedMultiplier?: number;
+  /**
+   * This zone is ice: units on it keep momentum, using the map's `ice` numbers
+   * (or core's defaults). See `IceTuning`. An older core ignores the field.
+   */
+  ice?: boolean;
   /** Core ships no palette for these: a zone core cannot name, it cannot colour. */
   render: { fill: string; stroke?: string };
   polygons: { x: number; y: number }[][];

@@ -243,6 +243,25 @@ function distanceTransform1D(
   }
 }
 
+/** An axis-aligned rectangle of temporary wall, world px. See `NavGrid.setBlocker`. */
+export interface NavBlocker {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+
+/** How far around a blocker its cells are rewritten, px. */
+export const NAV_BLOCKER_REACH = 256;
+
+/** Whole-pixel signed distance from a point to a rectangle: negative inside. */
+function signedDistanceToRect(px: number, py: number, r: NavBlocker): number {
+  const dx = Math.max(r.x0 - px, 0, px - r.x1);
+  const dy = Math.max(r.y0 - py, 0, py - r.y1);
+  if (dx > 0 || dy > 0) return Math.floor(Math.hypot(dx, dy));
+  return -Math.ceil(Math.min(px - r.x0, r.x1 - px, py - r.y0, r.y1 - py)) - 1;
+}
+
 export default class NavGrid {
   readonly cellSize: number;
   readonly cols: number;
@@ -285,7 +304,92 @@ export default class NavGrid {
 
   /** Bytes held by the static structure. Reported by the perf harness. */
   get memoryBytes(): number {
-    return this.clearance.byteLength;
+    return this.clearance.byteLength + (this.base?.byteLength ?? 0);
+  }
+
+  /**
+   * A private copy of this grid. A cached grid is shared by every match on its
+   * map (`NavigationSystem`'s `grids`), so one whose field a match is about to
+   * change — a blocker — has to stop being the shared one first.
+   */
+  clone(): NavGrid {
+    return new NavGrid(this.cellSize, this.cols, this.rows, this.clearance.slice(), this.buildMs);
+  }
+
+  /**
+   * Bumped on every blocker change. `PathAgent` remembers the revision its
+   * route was planned on and re-plans the moment it differs: a route through a
+   * gap that just closed is otherwise walked until the unit is shoved back off
+   * it, every time, for as long as the gap stays shut.
+   */
+  revision = 0;
+
+  /** The field as built, kept from the first blocker on so one can be lifted. */
+  private base: Int16Array | null = null;
+  private readonly blockers = new Map<string, NavBlocker>();
+
+  /**
+   * Map terrain that comes and goes during a match — a bridge that collapses
+   * and is rebuilt. While `rect` is set the rectangle is wall to everything
+   * that reads this field: routes go around it, `isLineClear` refuses it, and
+   * `TerrainField` (the same grid, `TerrainMap.useNavGrid`) pushes bodies out
+   * of it. `null` lifts it. Re-setting the same rectangle is free.
+   *
+   * Only cells within `NAV_BLOCKER_REACH` of the rectangle are rewritten, so
+   * the field is exact out to that distance from it and unchanged beyond —
+   * well past any `requiredClearance` a body on a map can ask for.
+   *
+   * Spell walls are deliberately not this: they are `DynamicWall`s, short-lived
+   * and many, and are answered by `wallOutlinesInArea` instead.
+   */
+  setBlocker(id: string, rect: NavBlocker | null): boolean {
+    const before = this.blockers.get(id);
+    if (
+      rect &&
+      before &&
+      before.x0 === rect.x0 &&
+      before.y0 === rect.y0 &&
+      before.x1 === rect.x1 &&
+      before.y1 === rect.y1
+    ) {
+      return false;
+    }
+    if (!rect && !before) return false;
+    this.base ??= this.clearance.slice();
+    if (rect) this.blockers.set(id, { ...rect });
+    else this.blockers.delete(id);
+    if (before) this.rewrite(before);
+    if (rect) this.rewrite(rect);
+    this.revision++;
+    return true;
+  }
+
+  /** Whether `id` is currently set. */
+  hasBlocker(id: string): boolean {
+    return this.blockers.has(id);
+  }
+
+  /** Re-derives every cell near `area` from the built field and the live blockers. */
+  private rewrite(area: NavBlocker): void {
+    const base = this.base!;
+    const { cellSize, cols, rows, clearance } = this;
+    const cx0 = Math.max(0, Math.floor((area.x0 - NAV_BLOCKER_REACH) / cellSize));
+    const cy0 = Math.max(0, Math.floor((area.y0 - NAV_BLOCKER_REACH) / cellSize));
+    const cx1 = Math.min(cols - 1, Math.floor((area.x1 + NAV_BLOCKER_REACH) / cellSize));
+    const cy1 = Math.min(rows - 1, Math.floor((area.y1 + NAV_BLOCKER_REACH) / cellSize));
+    const live = [...this.blockers.values()];
+    for (let cy = cy0; cy <= cy1; cy++) {
+      const py = (cy + 0.5) * cellSize;
+      for (let cx = cx0; cx <= cx1; cx++) {
+        const px = (cx + 0.5) * cellSize;
+        let value = base[cy * cols + cx];
+        for (const b of live) {
+          const d = signedDistanceToRect(px, py, b);
+          if (d < value) value = d;
+        }
+        clearance[cy * cols + cx] = value;
+      }
+    }
   }
 
   static fromPolygons(

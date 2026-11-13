@@ -1,3 +1,4 @@
+import { bountyForKill } from '@/game/combat/Bounty';
 import EventType from '@/game/enums/EventType';
 import type EventManager from '@/managers/EventManager';
 import type AttackableUnit from '@/game/gameObject/attackableUnits/AttackableUnit';
@@ -101,6 +102,8 @@ export interface Announcement {
   multi: number;
   /** The killer's run of kills since it last died, this one included. 0 when the killer is not a champion. */
   streak: number;
+  /** Truy Nã: extra gold the kill paid for the victim's head. Absent/0 otherwise. */
+  bounty?: number;
   /** The run the victim was on, when it was at least `SHUTDOWN_STREAK`; else 0. */
   shutdown: number;
   /**
@@ -182,7 +185,7 @@ export type ObjectiveKind = 'turret' | 'epic';
  * HUD so a run reads differently from a burst at a glance: first blood
  * crimson, a multi-kill gold, a run fire, a shutdown violet.
  */
-export type AnnouncementKind = 'first' | 'multi' | 'streak' | 'shutdown';
+export type AnnouncementKind = 'first' | 'multi' | 'streak' | 'shutdown' | 'bounty';
 
 export interface AnnouncementTag {
   kind: AnnouncementKind;
@@ -196,6 +199,7 @@ export function announcementTags(a: Announcement): AnnouncementTag[] {
   if (a.multi >= 2) tags.push({ kind: 'multi', label: multiKillLabel(a.multi) });
   if (a.shutdown > 0) tags.push({ kind: 'shutdown', label: SHUTDOWN_LABEL });
   if (a.streak >= SHUTDOWN_STREAK) tags.push({ kind: 'streak', label: streakLabel(a.streak) });
+  if (a.bounty) tags.push({ kind: 'bounty', label: `Truy Nã +${a.bounty}` });
   return tags;
 }
 
@@ -304,6 +308,8 @@ export default class MatchAnnouncer {
   private firstBloodAtMs = Number.POSITIVE_INFINITY;
   private seq = 0;
   private stop: (() => void) | null = null;
+  /** Truy Nã on: set by `Game` from the mode. */
+  bountyEnabled = false;
 
   constructor(
     private readonly events: EventManager | undefined,
@@ -507,6 +513,8 @@ export default class MatchAnnouncer {
       killerUnit: killer && killer !== victim ? killer : undefined,
       victimUnit: victim,
     };
+    const bounty = bountyForKill(this.bountyEnabled, victim, killerIsChampion ? killer : null, ended);
+    if (bounty > 0) announcement.bounty = bounty;
     this.push(announcement);
     for (const listener of this.listeners) listener(announcement);
   }

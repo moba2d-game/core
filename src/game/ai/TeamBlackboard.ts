@@ -79,6 +79,16 @@ export interface ObjectiveCall {
   monster: Monster;
 }
 
+/**
+ * Where a team's bots should be, as a circle. See `BlackboardHost.botGoalArea`.
+ * `null`/absent on a view means no such place: bots behave as they always did.
+ */
+export interface GoalArea {
+  x: number;
+  y: number;
+  r: number;
+}
+
 export interface TeamView {
   allies: readonly Champion[];
   enemies: readonly Champion[];
@@ -107,6 +117,11 @@ export interface TeamView {
   enemyTurrets: readonly Turret[];
   /** Every camp on the map, from the same one pass. Optional so a hand-built view in a suite need not list them. */
   camps?: readonly CampState[];
+  /**
+   * The area this team's bots are asked to stay in and hunt within, read once
+   * per snapshot from `BlackboardHost.botGoalArea`. `null`/absent: a normal map.
+   */
+  goal?: GoalArea | null;
   /** Where the team is going together, if anywhere. `null`/absent: no call. */
   objective?: ObjectiveCall | null;
   /** The bot living in the jungle — kept out of `laneAssignments`. Only a team of `JUNGLER_MIN_BOTS` bots has one. */
@@ -187,6 +202,16 @@ export type TeamSeesFn = (observers: readonly Champion[], target: Champion) => b
 
 export interface BlackboardHost {
   objectManager?: { objects: GameObject[] };
+  /**
+   * Optional seam: where this team's bots should be right now, or `null`.
+   *
+   * Generic on purpose, nothing here knows about the poison zone. `Game`
+   * answers it from the zone controller (the *next* circle while the warning
+   * is up, else the current one). A content-pack mode would supply its own:
+   * the hill in king-of-the-hill, the ball's half in a ball mode, by having
+   * `Game` return that circle here. Time is `matchTimeMs`, passed as `nowMs`.
+   */
+  botGoalArea?: (teamId: unknown, nowMs: number) => GoalArea | null;
 }
 
 export const EMPTY_VIEW: TeamView = Object.freeze({
@@ -384,6 +409,7 @@ export class TeamBlackboard {
         lanes,
         laneAssignments: assignments,
         camps,
+        goal: game.botGoalArea?.(teamId, nowMs) ?? null,
         objective: pickObjective(camps, allies, memory, nowMs),
         jungler,
       });
