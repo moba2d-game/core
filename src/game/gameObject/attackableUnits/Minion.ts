@@ -46,11 +46,58 @@ export type MinionStyle = 'melee' | 'ranged' | 'cannon';
  */
 export type MinionKind = string;
 
+/**
+ * What a pack-drawn minion body is told about the minion it is drawing.
+ *
+ * Plain numbers and CSS strings, and nothing else on purpose: a body is art,
+ * and art that could reach the unit could read state a LAN client does not
+ * have, or write some. **One object is reused for every minion in a frame** —
+ * read it inside the call and do not keep it.
+ */
+export interface MinionBodyView {
+  /** The body's **diameter** in world units — `MinionTypeDef.size`. */
+  readonly size: number;
+  readonly style: MinionStyle;
+  /** The team's three colours, as opaque CSS `rgb(...)` strings ready for `fillStyle`. */
+  readonly colors: Readonly<{ body: string; trim: string; bar: string }>;
+  /** 0 at rest and at the start of a wind-up, 1 at the moment the attack resolves. */
+  readonly charge: number;
+  /**
+   * The swing, as a slide along `+x` in world units: negative while hauling
+   * back, positive on the follow-through, 0 at rest. Melee only — a ranged
+   * body reads `charge`.
+   */
+  readonly reach: number;
+  /**
+   * The machine is drowning (the deep stress rung, or an explicit Thấp): draw
+   * the cheapest thing that still shows whose it is and which way it faces.
+   */
+  readonly thin: boolean;
+  /** Match time, for idle motion. Stops with the match, unlike a wall clock. */
+  readonly timeMs: number;
+  /** A per-minion constant in `[0, 2π)`, so a wave does not bob in lockstep. */
+  readonly seed: number;
+}
+
+/**
+ * A minion type's own body. Called inside the frame core already translated to
+ * the minion and rotated to its aim — the origin is its centre, `+x` is
+ * forward — with the raw canvas context, not p5.
+ *
+ * Draw the body and nothing else: the hit flash, buffs and the health bar stay
+ * core's. Leave the context as balanced as you found it (`save`/`restore` in
+ * pairs); fill and stroke styles need no restoring. There can be eighty of
+ * these a frame, so count your path operations.
+ */
+export type MinionBodyDraw = (ctx: CanvasRenderingContext2D, view: MinionBodyView) => void;
+
 export interface MinionPresetData {
   name: string;
   kind: MinionKind;
   /** How it fights and draws. See `MinionStyle`. */
   style: MinionStyle;
+  /** The type's own body, in place of the built-in one for its style. */
+  draw?: MinionBodyDraw;
   /** Overrides `MINION_BOUNTY` for this type. */
   goldBounty?: number;
   speed: number;
@@ -201,6 +248,41 @@ const cachedBarCss = (bar: number[]): string => {
  * minion about what a team looks like — the minimap's dots and the turret rows.
  * Exported rather than copied so a colour means the same thing everywhere.
  */
+const rgbCss = (c: number[]): string => `rgb(${c[0]}, ${c[1]}, ${c[2]})`;
+type BodyColors = MinionBodyView['colors'];
+const BODY_COLORS = new WeakMap<object, BodyColors>();
+const bodyColorsFor = (colors: { body: number[]; trim: number[]; bar: number[] }): BodyColors => {
+  let css = BODY_COLORS.get(colors);
+  if (css === undefined) {
+    css = Object.freeze({
+      body: rgbCss(colors.body),
+      trim: rgbCss(colors.trim),
+      bar: rgbCss(colors.bar),
+    });
+    BODY_COLORS.set(colors, css);
+  }
+  return css;
+};
+
+/** The one view every pack-drawn body is handed, refilled per minion. See `MinionBodyView`. */
+const BODY_VIEW: { -readonly [K in keyof MinionBodyView]: MinionBodyView[K] } = {
+  size: 0,
+  style: 'melee',
+  colors: bodyColorsFor(NEUTRAL_COLORS),
+  charge: 0,
+  reach: 0,
+  thin: false,
+  timeMs: 0,
+  seed: 0,
+};
+
+/**
+ * Body hooks that have thrown. A hook that throws once is not asked again for
+ * the rest of the session: it would throw for every minion of its type every
+ * frame, and the built-in body is a better picture than eighty warnings.
+ */
+const BROKEN_BODY_DRAWS = new WeakSet<MinionBodyDraw>();
+
 export const teamColors = (teamId: string): { body: number[]; trim: number[]; bar: number[] } =>
   TEAM_COLORS[teamId] ?? NEUTRAL_COLORS;
 
@@ -313,6 +395,10 @@ export default class Minion extends AttackableUnit {
   _scanCooldown: number;
   /** Last angle `aimAngle` had an answer for. See there. */
   _heading = 0;
+  /** The type's own body, when its map declared one. See `MinionBodyDraw`. */
+  bodyDraw?: MinionBodyDraw;
+  /** Phase offset handed to `bodyDraw`, fixed for this minion's life. */
+  _bodySeed = Math.random() * Math.PI * 2;
 
   constructor({
     game,
@@ -333,6 +419,7 @@ export default class Minion extends AttackableUnit {
     this.name = preset.name;
     this.kind = preset.kind;
     this.style = preset.style;
+    this.bodyDraw = preset.draw;
     if (preset.goldBounty !== undefined) this.goldBounty = preset.goldBounty;
     this.lane = lane;
     this.waypoints = waypoints;
@@ -827,7 +914,9 @@ export default class Minion extends AttackableUnit {
     rotate(this.aimAngle());
     noStroke();
 
-    if (thinCrowd) this.drawThinBody(size);
+    if (this.drawOwnBody(size, thinCrowd)) {
+      // the type drew itself
+    } else if (thinCrowd) this.drawThinBody(size);
     else if (this.style === 'cannon') this.drawCart(size);
     else if (this.style === 'ranged') this.drawCaster(size);
     else this.drawSoldier(size);
@@ -844,6 +933,42 @@ export default class Minion extends AttackableUnit {
     // usually is
     this.drawBuffs(compactUnits);
     this.drawHealthBar();
+  }
+
+  /**
+   * The type's own body, if its map gave it one. Answers whether it drew.
+   *
+   * Pack code on the render path, so it is fenced: a throw is caught, reported
+   * once, and the hook is retired — the caller falls through to the built-in
+   * body for this frame and every later one. The `save`/`restore` pair puts
+   * back whatever transform or alpha a half-finished hook left behind.
+   */
+  private drawOwnBody(size: number, thin: boolean): boolean {
+    const hook = this.bodyDraw;
+    if (!hook || BROKEN_BODY_DRAWS.has(hook)) return false;
+
+    const view = BODY_VIEW;
+    view.size = size;
+    view.style = this.style;
+    view.colors = bodyColorsFor(this.colors);
+    view.charge = this.windupCharge();
+    view.reach = this.style === 'melee' ? this.windupReach(size) : 0;
+    view.thin = thin;
+    view.timeMs = this.game.matchTimeMs ?? 0;
+    view.seed = this._bodySeed;
+
+    const ctx = drawingContext;
+    ctx.save();
+    try {
+      hook(ctx, view);
+      return true;
+    } catch (error) {
+      BROKEN_BODY_DRAWS.add(hook);
+      console.warn(`[minion] "${this.kind}" body draw threw; using the built-in body`, error);
+      return false;
+    } finally {
+      ctx.restore();
+    }
   }
 
   /**

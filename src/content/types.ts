@@ -107,6 +107,8 @@ export type {
   MapGeometrySource,
   MapSummary,
   MapTuning,
+  MinionBodyDraw,
+  MinionBodyView,
   MinionSlot,
   MinionStyle,
   MinionTuning,

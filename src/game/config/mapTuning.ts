@@ -317,6 +317,7 @@ export function resolveMinionTypes(
       name: def.name,
       kind: id,
       style: def.style ?? 'melee',
+      draw: typeof def.draw === 'function' ? def.draw : undefined,
       goldBounty: def.goldBounty,
       speed: def.speed,
       size: def.size,

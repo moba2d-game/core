@@ -7,7 +7,11 @@ import type {
   MonsterRoam,
   MonsterTemperament,
 } from '@/game/gameObject/attackableUnits/Monster';
-import type { MinionStyle } from '@/game/gameObject/attackableUnits/Minion';
+import type {
+  MinionBodyDraw,
+  MinionBodyView,
+  MinionStyle,
+} from '@/game/gameObject/attackableUnits/Minion';
 import type GameObject from '@/game/gameObject/GameObject';
 import type { GameObjectRuntimeContext } from '@/game/gameObject/GameObject';
 
@@ -26,7 +30,7 @@ export type { MonsterAbility, MonsterAttackStyle, MonsterRoam, MonsterTemperamen
 import type { ChampionAI } from '@/game/ai/ChampionAI';
 /** A pack's per-champion bot opinions. See `ContentPackCode.championAI`. */
 export type { ChampionAI, AIContext, SpellSituation } from '@/game/ai/ChampionAI';
-export type { MinionStyle };
+export type { MinionBodyDraw, MinionBodyView, MinionStyle };
 
 /**
  * What a content pack is, and why the code half is a function.
@@ -821,6 +825,15 @@ export interface MinionTypeDef {
   aggroRange: number;
   /** Defaults to `'melee'`. */
   style?: MinionStyle;
+  /**
+   * The type's own body, drawn in place of the built-in one for its `style`
+   * (contract 26). Raw canvas, in a frame already rotated so `+x` is forward;
+   * see `MinionBodyDraw` and `MinionBodyView`. `style` still decides how it
+   * fights. Core keeps the hit flash, buffs and health bar, and a hook that
+   * throws is retired in favour of the built-in body. An older core ignores
+   * the field.
+   */
+  draw?: MinionBodyDraw;
   /** Defaults to core's own minion bounty. */
   goldBounty?: number;
 }

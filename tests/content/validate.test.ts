@@ -881,6 +881,34 @@ describe('validatePack', () => {
     if (!result.ok) expect(result.errors.join(' ')).toMatch(/health/);
   });
 
+  it('accepts a minion type that brings its own body, and refuses one that is not a function', () => {
+    const siege = {
+      name: 'Siege',
+      speed: 2,
+      size: 44,
+      health: 100,
+      damage: 20,
+      attackInterval: 1_000,
+      attackRange: 40,
+      aggroRange: 300,
+    };
+    const withDraw = (draw: unknown) =>
+      validatePack(
+        mapWith({
+          tuning: {
+            minions: { types: { siege: { ...siege, draw } }, waves: { composition: ['siege'] } },
+          },
+        })
+      );
+
+    const drawn = withDraw(() => {});
+    expect(drawn.ok ? [] : drawn.errors).toEqual([]);
+
+    const broken = withDraw('crab.png');
+    expect(broken.ok).toBe(false);
+    if (!broken.ok) expect(broken.errors.join(' ')).toMatch(/siege\.draw: must be a function/);
+  });
+
   it('rejects a style core cannot fight or draw as', () => {
     const result = validatePack(
       mapWith({ tuning: { minions: { types: { siege: { name: 'S', style: 'flying' } } } } })

@@ -1098,9 +1098,15 @@ function checkMinionTuning(path: string, value: unknown, errors: string[]): void
               `core provides ${MINION_STYLES.join(', ')}`
           );
         }
-        const { name, style, ...numbers } = def;
+        const { name, style, draw, ...numbers } = def;
         void name;
         void style;
+        // Art, not a number: the one field of a type that is code. It is
+        // checked for being callable and for nothing else — what it paints is
+        // fenced at the call (`Minion.drawOwnBody`), not here.
+        if (draw !== undefined && typeof draw !== 'function') {
+          errors.push(`${typePath}.draw: must be a function`);
+        }
         checkNumberBag(typePath, numbers, MINION_TYPE_NUMBER_KEYS, errors);
         // Every field but `style` and `goldBounty` is required: a declared
         // type has no core default to fall back to.
