@@ -33,6 +33,7 @@ import Stun from '@/game/gameObject/buffs/Stun';
 import Taunt from '@/game/gameObject/buffs/Taunt';
 import Wallet, { CHAMPION_BOUNTY, STARTING_GOLD } from '@/game/economy/Wallet';
 import { cssColor } from '@/game/render/cssColor';
+import { stressTier } from '@/game/render/renderStress';
 import { drawImageCentered } from '@/game/render/nativeImage';
 import type Buff from '@/game/gameObject/Buff';
 import type { BuffStackId } from '@/game/gameObject/Buff';
@@ -508,7 +509,15 @@ export default class Champion extends AttackableUnit {
   private drawTrail(): void {
     if (!this.trail || !this.trailBody || this.isDead) return;
     this.trail.follow(this.position.x, this.position.y, deltaTime);
-    drawSpineBody(this.trail, this.trailBody, this.animatedValues.alpha);
+    const game = this.game as
+      | { renderQuality?: 'auto' | 'low' | 'high'; renderStressed?: boolean; deeplyStressed?: boolean }
+      | undefined;
+    drawSpineBody(
+      this.trail,
+      this.trailBody,
+      this.animatedValues.alpha,
+      stressTier(game?.renderQuality, game?.renderStressed, game?.deeplyStressed)
+    );
   }
 
   /** Widened to cover the tail, which reaches well past the portrait. */

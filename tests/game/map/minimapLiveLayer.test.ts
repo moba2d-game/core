@@ -32,8 +32,39 @@ const fakeGraphics = () => {
   // The fog punches its holes with the same `circle` the dots are drawn with,
   // so the two are counted apart by what mode the buffer is in.
   let erasing = false;
+  // The moving layer is painted on the buffer's own 2D context, not through
+  // p5, so that is what is counted for it. A fill or a disc issued while the
+  // context is in `destination-out` is a hole in the fog; any other is a dot.
+  const ctxCalls: Record<string, number> = {};
+  const tally = (name: string) => {
+    ctxCalls[name] = (ctxCalls[name] ?? 0) + 1;
+  };
+  const ctx = {
+    globalCompositeOperation: 'source-over',
+    fillStyle: '',
+    strokeStyle: '',
+    lineWidth: 1,
+    save: () => tally('save'),
+    restore: () => tally('restore'),
+    beginPath: () => tally('beginPath'),
+    closePath: () => tally('closePath'),
+    moveTo: () => tally('moveTo'),
+    arc: () => tally('arc'),
+    rect: () => tally('rect'),
+    stroke: () => tally('stroke'),
+    ellipse() {
+      tally(this.globalCompositeOperation === 'destination-out' ? 'litDisc' : 'disc');
+    },
+    fill() {
+      tally(this.globalCompositeOperation === 'destination-out' ? 'litFill' : 'fill');
+    },
+  };
   return {
     calls,
+    ctx,
+    ctxCalls,
+    drawingContext: ctx,
+    canvas: {},
     CLOSE: 'close',
     CORNER: 'corner',
     // `removeGraphics` is the only sanctioned way to free one of these, and it
@@ -63,9 +94,23 @@ const fakeGraphics = () => {
   };
 };
 
+/** The canvas the map is blitted onto: only `drawImage` is worth counting. */
+const mainContext = (onBlit: () => void) => ({
+  fillStyle: '',
+  strokeStyle: '',
+  lineWidth: 1,
+  save: () => {},
+  restore: () => {},
+  beginPath: () => {},
+  rect: () => {},
+  stroke: () => {},
+  drawImage: onBlit,
+});
+
 const hostWith = (
   blipCount: number,
-  vision: readonly VisionCircle[] | null = [{ x: 3200, y: 3200, r: 600 }]
+  vision: readonly VisionCircle[] | null = [{ x: 3200, y: 3200, r: 600 }],
+  tier: 0 | 1 | 2 = 0
 ) => {
   let blipCalls = 0;
   const blips = Array.from({ length: blipCount }, (_unused, i) => ({
@@ -83,6 +128,7 @@ const hostWith = (
       return blips;
     },
     visionCircles: () => vision,
+    stressTier: () => tier,
     playerPosition: () => ({ x: 100, y: 100 }),
     cameraBox: () => ({ x: 0, y: 0, w: 800, h: 600 }),
   };
@@ -111,6 +157,7 @@ describe('when the moving layer is due a repaint', () => {
 
 describe('Minimap.draw', () => {
   let images: number;
+  let blits: number;
   let graphics: ReturnType<typeof fakeGraphics>[];
   let now: number;
 
@@ -127,6 +174,8 @@ describe('Minimap.draw', () => {
     vi.stubGlobal('image', () => {
       images++;
     });
+    blits = 0;
+    vi.stubGlobal('drawingContext', mainContext(() => blits++));
     for (const name of [
       'push',
       'pop',
@@ -172,7 +221,10 @@ describe('Minimap.draw', () => {
     // Two images a frame: the wall layer and the moving layer. A frame that
     // blits neither is a frame the minimap is not on screen at all, because
     // `Game.draw` has already cleared the canvas.
-    expect(images).toBe(10);
+    // Straight onto the context: p5's `image()` costs several times the
+    // `drawImage` it ends in, and this is paid twice a frame, every frame.
+    expect(blits).toBe(10);
+    expect(images).toBe(0);
   });
 
   it('repaints again once the interval has elapsed', () => {
@@ -232,6 +284,7 @@ describe('the fog on the minimap', () => {
       return g;
     });
     vi.stubGlobal('image', () => {});
+    vi.stubGlobal('drawingContext', mainContext(() => {}));
     for (const name of [
       'push',
       'pop',
@@ -263,11 +316,45 @@ describe('the fog on the minimap', () => {
     ]);
     new Minimap(host).draw();
 
-    expect(live().calls.erase).toBe(1);
-    expect(live().calls.litCircle).toBe(3);
+    // One fill a disc at full quality — the calls p5 issued, so the same pixels.
+    expect(live().ctxCalls.litDisc).toBe(3);
+    expect(live().ctxCalls.litFill).toBe(3);
     // Or every dot after it would be erased too — the player's own dot is
     // painted last, and it is the one dot that is never allowed to vanish.
-    expect(live().calls.noErase).toBe(1);
+    expect(live().ctx.globalCompositeOperation).toBe('source-over');
+    expect(live().ctxCalls.fill).toBe(2); // the veil, and the player
+    // None of it through p5 any more.
+    expect(live().calls.erase).toBeUndefined();
+    expect(live().calls.circle).toBeUndefined();
+    expect(live().calls.litCircle).toBeUndefined();
+  });
+
+  it('punches every hole with one fill once the machine is behind', () => {
+    const lit = [
+      { x: 1_000, y: 1_000, r: 600 },
+      { x: 3_200, y: 3_200, r: 300 },
+      { x: 5_000, y: 900, r: 450 },
+    ];
+    for (const tier of [1, 2] as const) {
+      graphics.length = 0;
+      const { host } = hostWith(0, lit, tier);
+      new Minimap(host).draw();
+      expect(live().ctxCalls.litDisc).toBe(3);
+      expect(live().ctxCalls.litFill).toBe(1);
+    }
+  });
+
+  it('paints a dot a fill at full quality, and a run of one colour as one fill when behind', () => {
+    const full = hostWith(12, null, 0);
+    new Minimap(full.host).draw();
+    expect(live().ctxCalls.disc).toBe(13); // twelve dots and the player
+    expect(live().ctxCalls.fill).toBe(13);
+
+    graphics.length = 0;
+    const behind = hostWith(12, null, 1);
+    new Minimap(behind.host).draw();
+    expect(live().ctxCalls.disc).toBe(13);
+    expect(live().ctxCalls.fill).toBe(2); // the run, and the player
   });
 
   it('veils a map the team is not looking at, with no holes at all', () => {
@@ -276,8 +363,8 @@ describe('the fog on the minimap', () => {
 
     // The veil is still painted — that is the whole point of seeing nothing —
     // but nothing is erased out of it.
-    expect(live().calls.rect).toBe(2); // the veil, and the camera box
-    expect(live().calls.erase).toBeUndefined();
+    expect(live().ctxCalls.rect).toBe(2); // the veil, and the camera box
+    expect(live().ctxCalls.litFill).toBeUndefined();
   });
 
   it('paints no veil at all under the reveal cheat', () => {
@@ -286,7 +373,7 @@ describe('the fog on the minimap', () => {
 
     // `null` is "this map has no fog", which is not the same answer as "the
     // team can see nothing" — one is a clear map, the other a black one.
-    expect(live().calls.rect).toBe(1); // the camera box alone
-    expect(live().calls.erase).toBeUndefined();
+    expect(live().ctxCalls.rect).toBe(1); // the camera box alone
+    expect(live().ctxCalls.litFill).toBeUndefined();
   });
 });

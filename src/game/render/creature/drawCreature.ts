@@ -185,7 +185,8 @@ export function drawOrbBody(
 export function drawSpineBody(
   spine: Spine,
   body: { color: number[]; glow: number },
-  alpha = 255
+  alpha = 255,
+  tier: 0 | 1 | 2 = 0
 ) {
   const ring = spine.outline();
   if (ring.length < 3) return;
@@ -196,20 +197,29 @@ export function drawSpineBody(
   // then walk them again to do what `traceClosedCurve` does in one pass.
   const ctx = drawingContext as CanvasRenderingContext2D;
   ctx.save();
-  if (body.glow > 0) {
-    // One fill per joint on purpose: the halos overlap and are translucent,
-    // so a single path would lose the brighter spine the overlaps build.
+  // The halo is the body's decoration, and the one part of it that costs a
+  // fill per vertebra. A machine that is behind (`tier` 1, `renderStress.ts`)
+  // gets every halo in one path and one fill — an even glow, without the
+  // brighter spine the overlaps build — and one that is drowning (`tier` 2)
+  // gets the body alone, which is the part that says where the creature is.
+  if (body.glow > 0 && tier < 2) {
+    // One fill per joint on purpose at full quality: the halos overlap and are
+    // translucent, so a single path loses the brighter spine the overlaps build.
     ctx.fillStyle = cssColor(red, green, blue, Math.round(alpha * 0.16 * body.glow));
+    const merged = tier === 1;
+    if (merged) ctx.beginPath();
     for (let i = 0; i < spine.joints.length; i++) {
       const joint = spine.joints[i];
       const radius = spine.widthAt(i) * (1 + body.glow * 0.7);
       // `ellipse` + `closePath`, the path p5's `circle` issues, not `arc`:
       // the two rasterise a few levels apart on a GPU canvas.
-      ctx.beginPath();
+      if (merged) ctx.moveTo(joint.x + radius, joint.y);
+      else ctx.beginPath();
       ctx.ellipse(joint.x, joint.y, radius, radius, 0, 0, Math.PI * 2);
       ctx.closePath();
-      ctx.fill();
+      if (!merged) ctx.fill();
     }
+    if (merged) ctx.fill();
   }
 
   ctx.fillStyle = cssColor(red, green, blue, Math.round(alpha));

@@ -1642,6 +1642,7 @@ export default class Game {
       // A dot that steps instead of sliding is a cheap thing to trade for a
       // fight that does not stutter, and it is only traded on a machine that
       // is already dropping frames — see `MINIMAP_LIVE_INTERVAL_STRESSED_MS`.
+      stressTier: () => stressTier(this.renderQuality, this.renderStressed, this.deeplyStressed),
       liveRepaintIntervalMs: () => {
         switch (stressTier(this.renderQuality, this.renderStressed, this.deeplyStressed)) {
           case 2:

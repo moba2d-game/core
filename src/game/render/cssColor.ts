@@ -30,3 +30,17 @@ export function cssColor(r: number, g: number, b: number, a255 = 255): string {
   }
   return css;
 }
+
+/**
+ * The string p5's `fill(r, g, b, a)` hands the context, character for
+ * character: rounded channels and the alpha as an unrounded float.
+ *
+ * For a raw-context port of a draw whose alpha is a *fraction* every frame (a
+ * fade). `cssColor` floors alpha to a byte so it can cache, and on a phone's
+ * canvas that came out one level off p5's own string (measured on the speed
+ * streaks). Not cached: a fade's alpha never repeats.
+ */
+export function p5Rgba(r: number, g: number, b: number, a255: number): string {
+  const alpha = a255 < 0 ? 0 : a255 > 255 ? 1 : a255 / 255;
+  return `rgba(${Math.round(r)},${Math.round(g)},${Math.round(b)},${alpha})`;
+}

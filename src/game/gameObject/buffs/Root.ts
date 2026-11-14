@@ -3,6 +3,7 @@ import AssetManager from '@/managers/AssetManager';
 import BuffAddType from '@/game/enums/BuffAddType';
 import StatusFlags from '@/game/enums/StatusFlags';
 import Buff from '@/game/gameObject/Buff';
+import { cssColor } from '@/game/render/cssColor';
 
 // Trói chân
 export default class Root extends Buff {
@@ -20,11 +21,18 @@ export default class Root extends Buff {
     const pos = this.targetUnit.position;
     const size = this.targetUnit.animatedValues.displaySize;
 
-    push();
-    noFill();
-    stroke(this.effectColor);
-    strokeWeight(4);
-    circle(pos.x, pos.y, size + random(-3, 3));
-    pop();
+    // The raw context, with the path p5's `circle` emits (`ellipse` then
+    // `closePath`): same ring, without five p5 calls around one stroke.
+    const [r, g, b, a] = this.effectColor;
+    const radius = (size + random(-3, 3)) / 2;
+    const ctx = drawingContext;
+    ctx.save();
+    ctx.strokeStyle = cssColor(r, g, b, a);
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.ellipse(pos.x, pos.y, radius, radius, 0, 0, Math.PI * 2);
+    ctx.closePath();
+    ctx.stroke();
+    ctx.restore();
   }
 }

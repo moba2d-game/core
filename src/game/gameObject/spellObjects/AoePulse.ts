@@ -1,4 +1,6 @@
 import SpellObject from '@/game/gameObject/SpellObject';
+import { p5Rgba } from '@/game/render/cssColor';
+import { stressTier } from '@/game/render/renderStress';
 
 /**
  * The one-shot mark an area effect leaves behind: plays once, fades, gone.
@@ -55,6 +57,20 @@ export type AoePulseStyle =
   /** Descending blades of light. */
   | 'blades';
 
+/** A whole circle as p5's `circle` emits it: `ellipse`, then `closePath`. */
+function discPath(ctx: CanvasRenderingContext2D, x: number, y: number, radius: number): void {
+  ctx.beginPath();
+  ctx.ellipse(x, y, Math.abs(radius), Math.abs(radius), 0, 0, Math.PI * 2);
+  ctx.closePath();
+}
+
+function pulseTier(game: unknown): 0 | 1 | 2 {
+  const g = game as
+    | { renderQuality?: 'auto' | 'low' | 'high'; renderStressed?: boolean; deeplyStressed?: boolean }
+    | undefined;
+  return stressTier(g?.renderQuality, g?.renderStressed, g?.deeplyStressed);
+}
+
 export default class AoePulse extends SpellObject {
   position: p5.Vector = this.owner.position.copy();
   radius = 150;
@@ -83,46 +99,116 @@ export default class AoePulse extends SpellObject {
     const fade = 1 - t;
     const [r, g, b] = this.color;
 
+    if (this.style === 'splash' || this.style === 'ring' || this.style === 'crater') {
+      this._drawOnContext(t, fade, r, g, b);
+      return;
+    }
+
     push();
     translate(this.position.x, this.position.y);
     noStroke();
     fill(r, g, b, this.fillAlpha * fade);
     circle(0, 0, this.radius * 2 * (0.6 + 0.4 * t));
 
-    if (this.style === 'ring') this._drawRing(t, fade, r, g, b);
-    else if (this.style === 'shards') this._drawShards(t, fade, r, g, b);
+    if (this.style === 'shards') this._drawShards(t, fade, r, g, b);
     else if (this.style === 'bandage') this._drawBandage(t, fade, r, g, b);
     else if (this.style === 'columns') this._drawColumns(t, fade, r, g, b);
-    else if (this.style === 'splash') this._drawSplash(t, fade, r, g, b);
     else if (this.style === 'buckshot') this._drawBuckshot(t, fade, r, g, b);
     else if (this.style === 'flame') this._drawFlame(t, fade, r, g, b);
     else if (this.style === 'frag') this._drawFrag(t, fade, r, g, b);
     else if (this.style === 'venom') this._drawVenom(t, fade, r, g, b);
     else if (this.style === 'stomp') this._drawStomp(t, fade, r, g, b);
-    else if (this.style === 'blades') this._drawBlades(t, fade, r, g, b);
-    else this._drawCrater(t, fade, r, g, b);
+    else this._drawBlades(t, fade, r, g, b);
 
     pop();
   }
 
-  /** Droplets thrown up on a parabola and falling back into a puddle. */
-  _drawSplash(t: number, fade: number, r: number, g: number, b: number) {
-    noStroke();
-    for (let i = 0; i < this.spokes; i++) {
-      const a = this.seed + (i / this.spokes) * TWO_PI;
-      const reach = this.radius * t * (0.75 + 0.3 * Math.sin(this.seed + i * 1.9));
-      // up first, then back down — the arc is what separates water from debris
-      const lift = Math.sin(constrain(t, 0, 1) * PI) * this.radius * 0.16;
-      fill(r, g, b, 235 * fade);
-      circle(cos(a) * reach, sin(a) * reach - lift, this.radius * 0.1 * (1 - t * 0.6) + 4);
+  /**
+   * The three styles nearly every pulse in a fight wears — `splash` (every
+   * bolt that lands), `ring` and `crater` — on the raw 2D context.
+   *
+   * Through p5 a splash was thirteen `fill()` + `circle()` pairs, and `fill()`
+   * parses and re-serialises its colour every call. At full quality this emits
+   * the paths p5 emitted, one paint a shape, with p5's own colour strings
+   * (`p5Rgba`), so the pixels are the same ones.
+   *
+   * Once the machine is behind (`stressTier` 1 and up) the shapes that share
+   * a paint share a path: a splash's droplets are one fill, a crater's cracks
+   * one stroke. That is not the same antialiasing where two of them touch
+   * (`docs/TRAPS.md`, rendering), which is why it waits for the tier. The
+   * rings of `ring` each have their own weight and alpha and stay one stroke
+   * apiece on every tier.
+   *
+   * The other nine styles still go through p5 (`draw`).
+   */
+  _drawOnContext(t: number, fade: number, r: number, g: number, b: number) {
+    const batch = pulseTier(this.game) >= 1;
+    const R = this.radius;
+    const ctx = drawingContext;
+    ctx.save();
+    ctx.translate(this.position.x, this.position.y);
+    ctx.fillStyle = p5Rgba(r, g, b, this.fillAlpha * fade);
+    discPath(ctx, 0, 0, R * (0.6 + 0.4 * t));
+    ctx.fill();
+
+    if (this.style === 'ring') {
+      for (let i = 0; i < this.rings; i++) {
+        const spread = t + i * 0.18;
+        if (spread > 1) continue;
+        ctx.strokeStyle = p5Rgba(r, g, b, 220 * (1 - spread));
+        ctx.lineWidth = 5 * (1 - spread) + 1;
+        discPath(ctx, 0, 0, R * (0.35 + 0.65 * spread));
+        ctx.stroke();
+      }
+    } else if (this.style === 'splash') {
+      const lift = Math.sin(constrain(t, 0, 1) * Math.PI) * R * 0.16;
+      const droplet = (R * 0.1 * (1 - t * 0.6) + 4) / 2;
+      ctx.fillStyle = p5Rgba(r, g, b, 235 * fade);
+      if (batch) ctx.beginPath();
+      for (let i = 0; i < this.spokes; i++) {
+        const a = this.seed + (i / this.spokes) * Math.PI * 2;
+        const reach = R * t * (0.75 + 0.3 * Math.sin(this.seed + i * 1.9));
+        const x = Math.cos(a) * reach;
+        const y = Math.sin(a) * reach - lift;
+        if (batch) {
+          ctx.moveTo(x + droplet, y);
+          ctx.ellipse(x, y, droplet, droplet, 0, 0, Math.PI * 2);
+          ctx.closePath();
+        } else {
+          discPath(ctx, x, y, droplet);
+          ctx.fill();
+        }
+      }
+      if (batch) ctx.fill();
+      // the puddle spreading underneath
+      ctx.fillStyle = p5Rgba(r, g, b, 90 * fade);
+      discPath(ctx, 0, 0, R * (0.4 + 0.6 * t));
+      ctx.fill();
+      ctx.strokeStyle = p5Rgba(r, g, b, 220 * fade);
+      ctx.lineWidth = 4 * fade + 1;
+      discPath(ctx, 0, 0, R * (0.2 + 0.8 * t));
+      ctx.stroke();
+    } else {
+      const grow = 0.45 + 0.55 * Math.min(1, t * 1.6);
+      ctx.strokeStyle = p5Rgba(r, g, b, 250 * fade);
+      ctx.lineWidth = 9 * fade + 2;
+      discPath(ctx, 0, 0, R * grow);
+      ctx.stroke();
+      ctx.lineWidth = 2.5 * fade + 1;
+      if (batch) ctx.beginPath();
+      for (let i = 0; i < this.spokes; i++) {
+        const a = this.seed + (i / this.spokes) * Math.PI * 2;
+        const inner = R * grow * 0.9;
+        const outer = R * grow * (1.05 + 0.28 * Math.abs(Math.sin(this.seed + i * 3.1)));
+        const kink = a + 0.14 * Math.sin(this.seed + i);
+        if (!batch) ctx.beginPath();
+        ctx.moveTo(Math.cos(a) * inner, Math.sin(a) * inner);
+        ctx.lineTo(Math.cos(kink) * outer, Math.sin(kink) * outer);
+        if (!batch) ctx.stroke();
+      }
+      if (batch) ctx.stroke();
     }
-    // the puddle spreading underneath
-    fill(r, g, b, 90 * fade);
-    circle(0, 0, this.radius * 2 * (0.4 + 0.6 * t));
-    noFill();
-    stroke(r, g, b, 220 * fade);
-    strokeWeight(4 * fade + 1);
-    circle(0, 0, this.radius * 2 * (0.2 + 0.8 * t));
+    ctx.restore();
   }
 
   /** A tight cone of pellets, not a symmetric burst. */
@@ -276,18 +362,6 @@ export default class AoePulse extends SpellObject {
     circle(0, 0, this.radius * 2);
   }
 
-  /** Concentric shockwave. The plain one — keep it for things that are a wave. */
-  _drawRing(t: number, fade: number, r: number, g: number, b: number) {
-    noFill();
-    for (let i = 0; i < this.rings; i++) {
-      const spread = t + i * 0.18;
-      if (spread > 1) continue;
-      stroke(r, g, b, 220 * (1 - spread));
-      strokeWeight(5 * (1 - spread) + 1);
-      circle(0, 0, this.radius * 2 * (0.35 + 0.65 * spread));
-    }
-  }
-
   /** Rock splinters thrown outward — a ground burst, no ring at all. */
   _drawShards(t: number, fade: number, r: number, g: number, b: number) {
     noStroke();
@@ -348,23 +422,6 @@ export default class AoePulse extends SpellObject {
     stroke(r, g, b, 150 * fade);
     strokeWeight(3 * fade + 1);
     circle(0, 0, this.radius * 2);
-  }
-
-  /** A hole punched in the ground: hard rim, cracks running out of it. */
-  _drawCrater(t: number, fade: number, r: number, g: number, b: number) {
-    const grow = 0.45 + 0.55 * Math.min(1, t * 1.6);
-    noFill();
-    stroke(r, g, b, 250 * fade);
-    strokeWeight(9 * fade + 2);
-    circle(0, 0, this.radius * 2 * grow);
-    strokeWeight(2.5 * fade + 1);
-    for (let i = 0; i < this.spokes; i++) {
-      const a = this.seed + (i / this.spokes) * TWO_PI;
-      const inner = this.radius * grow * 0.9;
-      const outer = this.radius * grow * (1.05 + 0.28 * Math.abs(Math.sin(this.seed + i * 3.1)));
-      const kink = a + 0.14 * Math.sin(this.seed + i);
-      line(cos(a) * inner, sin(a) * inner, cos(kink) * outer, sin(kink) * outer);
-    }
   }
 
   getDisplayBoundingBox() {

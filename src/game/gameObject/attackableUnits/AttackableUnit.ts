@@ -685,18 +685,34 @@ export default class AttackableUnit extends GameObject {
     ctx.fill();
   }
 
+  /**
+   * The facing tick. On the raw context: p5's `push` / `Vector.sub` / `stroke`
+   * / `line` / `pop` measured ~0.33ms per unit on a Helio P35 for what is one
+   * two-point path. Same path p5's `line` emits (`moveTo`, `lineTo`, stroke),
+   * so the pixels are the same ones.
+   */
   drawDir() {
-    if (!this.isDead && this.game.worldMouse) {
-      let pos = this.position;
-      let { displaySize: size, alpha } = this.animatedValues;
+    const mouse = this.game.worldMouse;
+    if (this.isDead || !mouse) return;
+    const pos = this.position;
+    const { displaySize: size, alpha } = this.animatedValues;
+    let dx = mouse.x - pos.x;
+    let dy = mouse.y - pos.y;
+    const length = Math.sqrt(dx * dx + dy * dy);
+    // `setMag` on a zero vector leaves it zero, and the round cap makes a dot.
+    const reach = length > 0 ? (size / 2 + 2) / length : 0;
+    dx *= reach;
+    dy *= reach;
 
-      push();
-      let mouseDir = p5.Vector.sub(this.game.worldMouse, pos).setMag(size / 2 + 2);
-      stroke(255, Math.min(alpha, 125));
-      strokeWeight(4);
-      line(pos.x, pos.y, pos.x + mouseDir.x, pos.y + mouseDir.y);
-      pop();
-    }
+    const ctx = drawingContext;
+    ctx.save();
+    ctx.strokeStyle = cssColor(255, 255, 255, Math.min(alpha, 125));
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.moveTo(pos.x, pos.y);
+    ctx.lineTo(pos.x + dx, pos.y + dy);
+    ctx.stroke();
+    ctx.restore();
   }
 
   drawBuffs(compact = false) {

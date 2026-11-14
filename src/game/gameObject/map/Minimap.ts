@@ -15,6 +15,7 @@
 import { removeGraphics } from '@/utils/graphics.utils';
 import AssetManager from '@/managers/AssetManager';
 import { safeAreaInsets } from '@/game/render/safeArea';
+import { cssColor } from '@/game/render/cssColor';
 
 export interface MinimapRect {
   x: number;
@@ -169,6 +170,37 @@ export interface MinimapHost {
    * quality tiers did.
    */
   liveRepaintIntervalMs?(): number;
+  /**
+   * How much the picture may give up — `render/renderStress.ts`'s number.
+   * Optional for the same reason as the line above: a host that does not
+   * answer is tier 0, and tier 0 is the full picture.
+   */
+  stressTier?(): 0 | 1 | 2;
+}
+
+const TAU = Math.PI * 2;
+/** What p5's `erase()` fills with: opaque, so `destination-out` removes all of it. */
+const FOG_HOLE_CSS = 'rgba(255, 255, 255, 1)';
+
+/**
+ * A buffer blitted from its corner. A stand-in with no canvas behind it still
+ * goes through p5, so this can never draw less than `image()` would have.
+ */
+function drawImageCorner(
+  ctx: CanvasRenderingContext2D,
+  source: any,
+  x: number,
+  y: number,
+  size: number
+): void {
+  const native = source?.canvas ?? source?.elt;
+  if (native) ctx.drawImage(native, x, y, size, size);
+  else {
+    push();
+    imageMode(CORNER);
+    image(source, x, y, size, size);
+    pop();
+  }
 }
 
 /** What a press on the screen means to the minimap. See `Minimap.route`. */
@@ -407,16 +439,19 @@ export class Minimap {
     const buffer = this.bufferFor(bounds.size);
     const live = this.liveLayerFor(bounds);
 
-    push();
-    imageMode(CORNER);
-    rectMode(CORNER);
-    image(buffer, bounds.x, bounds.y, bounds.size, bounds.size);
-    image(live, bounds.x, bounds.y, bounds.size, bounds.size);
-    noFill();
-    stroke(BORDER_COLOR[0], BORDER_COLOR[1], BORDER_COLOR[2], BORDER_COLOR[3]);
-    strokeWeight(2);
-    rect(bounds.x, bounds.y, bounds.size, bounds.size);
-    pop();
+    // The raw context: two blits and one outline were eight p5 calls, and
+    // `image()` alone costs several times the `drawImage` it ends in. The
+    // border is the path p5's `rect` emits, so the pixels are the same ones.
+    const ctx = drawingContext;
+    ctx.save();
+    drawImageCorner(ctx, buffer, bounds.x, bounds.y, bounds.size);
+    drawImageCorner(ctx, live, bounds.x, bounds.y, bounds.size);
+    ctx.strokeStyle = cssColor(BORDER_COLOR[0], BORDER_COLOR[1], BORDER_COLOR[2], BORDER_COLOR[3]);
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.rect(bounds.x, bounds.y, bounds.size, bounds.size);
+    ctx.stroke();
+    ctx.restore();
   }
 
   /**
@@ -463,21 +498,30 @@ export class Minimap {
     const mapSize = this.host.mapSize();
     const dotScale = Math.min(BLIP_SCALE_MAX, Math.max(BLIP_SCALE_MIN, size / MINIMAP_SIZE));
 
+    // Everything below is on the buffer's own 2D context, emitting the paths
+    // p5 emitted (`rect` for a square; `ellipse` + `closePath` for a disc) —
+    // the same pixels without a `fill()` colour parse in front of every dot.
+    // `batch` is the one visible trade and it waits for a machine that is
+    // behind: discs and dots that share a colour share a path and a fill,
+    // which is cheaper and is not the same antialiasing where two of them
+    // touch (`docs/TRAPS.md`, rendering).
+    const batch = (this.host.stressTier?.() ?? 0) >= 1;
+    const ctx = graphics.drawingContext as CanvasRenderingContext2D;
+
     graphics.clear();
-    graphics.rectMode(graphics.CORNER);
+    ctx.save();
 
     // Under everything: what the team cannot see. Painted into this layer
     // rather than the wall layer under it because vision moves and walls do
     // not — the veil is repainted on the moving layer's own 20Hz beat, and the
     // static trace it sits over is still built once per size.
-    this.paintFog(graphics, local, mapSize, size);
+    this.paintFog(ctx, local, mapSize, size, batch);
 
     // One veil path (even-odd hole) and one ring, then the warning ring.
     const zone = this.host.zone?.();
     if (zone) {
       const k = size / mapSize;
       const c = zone.current;
-      const ctx = graphics.drawingContext as CanvasRenderingContext2D;
       ctx.save();
       ctx.beginPath();
       ctx.rect(0, 0, size, size);
@@ -503,36 +547,54 @@ export class Minimap {
     const box = this.host.cameraBox();
     const topLeft = worldToMinimap({ x: box.x, y: box.y }, local, mapSize);
     const span = { w: (box.w / mapSize) * size, h: (box.h / mapSize) * size };
-    graphics.noFill();
-    graphics.stroke(
+    ctx.strokeStyle = cssColor(
       CAMERA_BOX_COLOR[0],
       CAMERA_BOX_COLOR[1],
       CAMERA_BOX_COLOR[2],
       CAMERA_BOX_COLOR[3]
     );
-    graphics.strokeWeight(1);
-    graphics.rect(topLeft.x, topLeft.y, span.w, span.h);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.rect(topLeft.x, topLeft.y, span.w, span.h);
+    ctx.stroke();
 
-    graphics.noStroke();
+    // A run of dots in one colour is one path when batching; the order they
+    // are painted in is the host's either way, so what covers what is too.
+    let open: string | null = null;
     for (const blip of this.host.blips()) {
       const at = worldToMinimap(blip, local, mapSize);
       const diameter = BLIP_DIAMETER[blip.kind] * dotScale;
-      graphics.fill(blip.color[0], blip.color[1], blip.color[2]);
-      if (blip.kind === 'structure') {
-        graphics.rect(at.x - diameter / 2, at.y - diameter / 2, diameter, diameter);
-      } else {
-        graphics.circle(at.x, at.y, diameter);
+      const color = cssColor(blip.color[0], blip.color[1], blip.color[2]);
+      if (!batch || color !== open) {
+        if (batch && open !== null) ctx.fill();
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        open = color;
       }
+      if (blip.kind === 'structure') {
+        ctx.rect(at.x - diameter / 2, at.y - diameter / 2, diameter, diameter);
+      } else {
+        if (batch) ctx.moveTo(at.x + diameter / 2, at.y);
+        ctx.ellipse(at.x, at.y, diameter / 2, diameter / 2, 0, 0, TAU);
+        ctx.closePath();
+      }
+      if (!batch) ctx.fill();
     }
+    if (batch && open !== null) ctx.fill();
 
     // Last, and outlined: the player is the one dot that must never be lost
     // under another, and is drawn whatever the fog says.
     const player = worldToMinimap(this.host.playerPosition(), local, mapSize);
-    const playerDiameter = BLIP_DIAMETER.player * dotScale;
-    graphics.stroke(20, 24, 32, 220);
-    graphics.strokeWeight(1.5);
-    graphics.fill(PLAYER_COLOR[0], PLAYER_COLOR[1], PLAYER_COLOR[2]);
-    graphics.circle(player.x, player.y, playerDiameter);
+    const playerRadius = (BLIP_DIAMETER.player * dotScale) / 2;
+    ctx.strokeStyle = cssColor(20, 24, 32, 220);
+    ctx.lineWidth = 1.5;
+    ctx.fillStyle = cssColor(PLAYER_COLOR[0], PLAYER_COLOR[1], PLAYER_COLOR[2]);
+    ctx.beginPath();
+    ctx.ellipse(player.x, player.y, playerRadius, playerRadius, 0, 0, TAU);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
   }
 
   /**
@@ -547,27 +609,44 @@ export class Minimap {
    * wall's shadow is well under one pixel wide at this scale. A disc per
    * revealer is what the polygons look like from here.
    *
-   * `erase` rather than a second buffer and a mask blit: p5 gives the same
-   * destination-out composite the fog overlay itself uses, on a buffer that is
-   * repainted five times a second at most.
+   * `destination-out` rather than a second buffer and a mask blit: the same
+   * composite the fog overlay itself uses, and what p5's `erase` is underneath.
+   * One fill a disc at full quality, as p5 issued them; one fill for all of
+   * them once `batch` is on.
    */
-  private paintFog(graphics: any, local: MinimapRect, mapSize: number, size: number): void {
+  private paintFog(
+    ctx: CanvasRenderingContext2D,
+    local: MinimapRect,
+    mapSize: number,
+    size: number,
+    batch: boolean
+  ): void {
     const circles = this.host.visionCircles();
     // `null` is the reveal cheat: no veil at all, not a veil with no holes.
     if (circles === null) return;
 
-    graphics.noStroke();
-    graphics.fill(FOG_COLOR[0], FOG_COLOR[1], FOG_COLOR[2], FOG_COLOR[3]);
-    graphics.rect(0, 0, size, size);
+    ctx.fillStyle = cssColor(FOG_COLOR[0], FOG_COLOR[1], FOG_COLOR[2], FOG_COLOR[3]);
+    ctx.beginPath();
+    ctx.rect(0, 0, size, size);
+    ctx.fill();
     if (circles.length === 0) return;
 
     const scale = size / mapSize;
-    graphics.erase();
+    ctx.globalCompositeOperation = 'destination-out';
+    ctx.fillStyle = FOG_HOLE_CSS;
+    if (batch) ctx.beginPath();
     for (const lit of circles) {
       const at = worldToMinimap(lit, local, mapSize);
-      graphics.circle(at.x, at.y, Math.max(FOG_MIN_LIT_PX, lit.r * 2 * scale));
+      const radius = Math.max(FOG_MIN_LIT_PX, lit.r * 2 * scale) / 2;
+      if (batch) ctx.moveTo(at.x + radius, at.y);
+      else ctx.beginPath();
+      ctx.ellipse(at.x, at.y, radius, radius, 0, 0, TAU);
+      ctx.closePath();
+      if (!batch) ctx.fill();
     }
-    graphics.noErase();
+    if (batch) ctx.fill();
+    // Or every dot after it would be erased too.
+    ctx.globalCompositeOperation = 'source-over';
   }
 
   private bufferFor(size: number): any {
