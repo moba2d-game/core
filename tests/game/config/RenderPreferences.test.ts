@@ -126,6 +126,31 @@ describe('render scale', () => {
     expect(applyDensity.mock.calls).toEqual([[0.75], [1]]);
   });
 
+  it('round-trips the map ground, and an unknown value is the painted art', () => {
+    expect((GameModule as any).mapGroundPreference()).toBe('detailed');
+    for (const ground of ['plain', 'detailed'] as const) {
+      (GameModule as any).setMapGroundPreference(ground);
+      expect(storage.getItem('moba2d.mapGround')).toBe(ground);
+      expect((GameModule as any).mapGroundPreference()).toBe(ground);
+    }
+    storage.setItem('moba2d.mapGround', 'wireframe');
+    expect((GameModule as any).mapGroundPreference()).toBe('detailed');
+    (GameModule as any).setMapGroundPreference('wireframe');
+    expect(storage.getItem('moba2d.mapGround')).toBe('detailed');
+  });
+
+  it('stores the chosen map ground on the game and persists it', () => {
+    const game = { mapGround: 'detailed' };
+
+    (GameModule.default.prototype as any).setMapGround.call(game, 'plain');
+    expect(game.mapGround).toBe('plain');
+    expect(storage.getItem('moba2d.mapGround')).toBe('plain');
+
+    (GameModule.default.prototype as any).setMapGround.call(game, 'wireframe');
+    expect(game.mapGround).toBe('detailed');
+    expect(storage.getItem('moba2d.mapGround')).toBe('detailed');
+  });
+
   it('stores the chosen scale on the game and persists it', () => {
     vi.stubGlobal('pixelDensity', vi.fn());
     const game = { renderScale: 'auto' };

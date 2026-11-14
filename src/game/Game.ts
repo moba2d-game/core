@@ -141,11 +141,14 @@ export {
   setRenderFpsPreference,
   renderScalePreference,
   setRenderScalePreference,
+  mapGroundPreference,
+  setMapGroundPreference,
   canvasDensity,
   screenShakePreference,
   setScreenShakePreference,
   type RenderFps,
   type RenderScale,
+  type MapGround,
 } from './config/renderPreferences';
 
 // A re-export does not bind the names locally; this file applies all six.
@@ -156,11 +159,14 @@ import {
   setRenderFpsPreference,
   renderScalePreference,
   setRenderScalePreference,
+  mapGroundPreference,
+  setMapGroundPreference,
   canvasDensity,
   screenShakePreference,
   setScreenShakePreference,
   type RenderFps,
   type RenderScale,
+  type MapGround,
 } from './config/renderPreferences';
 
 /** Truy Nã: the wanted champion's minimap dot, gold. */
@@ -261,6 +267,12 @@ export default class Game {
 
   renderFps: RenderFps = renderFpsPreference();
   renderScale: RenderScale = renderScalePreference();
+  /**
+   * `'plain'` puts core's solid polygons back under a map that paints its own
+   * terrain, and tells pack scenery (`api.render.plainGround`) to leave its
+   * decoration out. Read every frame, so a change shows on the next one.
+   */
+  mapGround: MapGround = mapGroundPreference();
   /**
    * The `pixelDensity` the canvas is at now. Starts at the 1 that
    * `GameScene.enter` sets and `destroy()` puts back, so a match on the
@@ -1368,6 +1380,12 @@ export default class Game {
   setRenderScale(scale: RenderScale): void {
     this.renderScale = scale === 100 || scale === 75 || scale === 50 ? scale : 'auto';
     setRenderScalePreference(this.renderScale);
+  }
+
+  /** Painted or plain ground — `TerrainMap.draw` and pack scenery read it per frame. */
+  setMapGround(ground: MapGround): void {
+    this.mapGround = ground === 'plain' ? 'plain' : 'detailed';
+    setMapGroundPreference(this.mapGround);
   }
 
   /**

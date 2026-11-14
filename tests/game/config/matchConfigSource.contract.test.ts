@@ -137,6 +137,7 @@ const fakeHost = (director: MatchDirector): MatchDirectorHost => {
   let quality: MatchDirectorHost['renderQuality'] = 'auto';
   let fps: MatchDirectorHost['renderFps'] = 60;
   let scale: MatchDirectorHost['renderScale'] = 'auto';
+  let ground: MatchDirectorHost['mapGround'] = 'detailed';
   let shake = true;
   return {
     director,
@@ -173,6 +174,12 @@ const fakeHost = (director: MatchDirector): MatchDirectorHost => {
     },
     setRenderScale(next) {
       scale = next;
+    },
+    get mapGround() {
+      return ground;
+    },
+    setMapGround(next) {
+      ground = next;
     },
     get screenShake() {
       return shake;
@@ -670,6 +677,14 @@ describe.each(SOURCES)('MatchConfigSource contract — %s', (name, make) => {
       source.setRenderFps(30);
       expect(source.renderQuality).toBe('low');
       expect(source.renderFps).toBe(30);
+    });
+
+    it('stores the map ground, painted by default', () => {
+      expect(source.mapGround).toBe('detailed');
+      source.setMapGround('plain');
+      expect(source.mapGround).toBe('plain');
+      source.setMapGround('detailed');
+      expect(source.mapGround).toBe('detailed');
     });
 
     it('stores the canvas resolution scale', () => {

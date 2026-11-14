@@ -104,6 +104,10 @@ function build(api: ContentApi) {
     }
 
     draw(): void {
+      // "Nền bản đồ: Đơn giản": core is drawing its solid walls, bushes and
+      // water again, and all of this is decoration. Asked every frame, so the
+      // setting changes the very next one; the tiles stay baked for the way back.
+      if (api.render.plainGround(this.game)) return;
       const camera = (this.game as { camera?: unknown } | undefined)?.camera as
         | {
             getBoundingBox?: () => { x: number; y: number; w: number; h: number };

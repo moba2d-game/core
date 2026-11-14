@@ -42,7 +42,7 @@ import {
 } from '@/game/input/touchPreferences';
 import { ZOOM_FACTOR_MAX, ZOOM_FACTOR_MIN } from '@/game/config/zoomBounds';
 import type { RenderQuality } from '@/game/managers/ObjectManager';
-import type { RenderFps, RenderScale } from '@/game/config/renderPreferences';
+import type { MapGround, RenderFps, RenderScale } from '@/game/config/renderPreferences';
 
 const panel = inject(CONFIG_PANEL)!;
 const source = panel.source;
@@ -100,6 +100,7 @@ const setTargetPriority = (priority: TouchTargetPriority): void => {
 const renderQuality = ref<RenderQuality>(source.renderQuality);
 const renderFps = ref<RenderFps>(source.renderFps);
 const renderScale = ref<RenderScale>(source.renderScale);
+const mapGround = ref<MapGround>(source.mapGround);
 
 const onRenderQualityChange = (event: Event): void => {
   source.setRenderQuality((event.target as HTMLSelectElement).value as RenderQuality);
@@ -115,6 +116,11 @@ const onRenderScaleChange = (event: Event): void => {
   const value = (event.target as HTMLSelectElement).value;
   source.setRenderScale(value === 'auto' ? 'auto' : (Number(value) as RenderScale));
   renderScale.value = source.renderScale;
+};
+
+const onMapGroundChange = (event: Event): void => {
+  source.setMapGround((event.target as HTMLSelectElement).value === 'plain' ? 'plain' : 'detailed');
+  mapGround.value = source.mapGround;
 };
 
 const screenShake = ref<boolean>(source.screenShake);
@@ -234,6 +240,7 @@ const targetSummary = computed(() => (targetPriority.value === 'nearest' ? 'Gầ
 const displaySummary = computed(() => {
   const parts = [QUALITY_LABELS[renderQuality.value] ?? renderQuality.value, `${renderFps.value} FPS`];
   if (renderScale.value !== 'auto') parts.push(`${renderScale.value}%`);
+  if (mapGround.value === 'plain') parts.push('nền đơn giản');
   if (screenShake.value) parts.push('rung màn hình');
   if (live) parts.push(`zoom ${Math.round(zoom.value * 100)}%`);
   return parts.join(' · ');
@@ -344,6 +351,13 @@ const onDebugChange = (key: keyof DebugLayerConfig, event: Event): void => {
             <option :value="100">100% — nét nhất</option>
             <option :value="75">75% — mượt hơn</option>
             <option :value="50">50% — mượt nhất, hơi nhoè</option>
+          </select>
+        </label>
+        <label class="pregame-field">
+          <span>Nền bản đồ</span>
+          <select id="practice-map-ground" :value="mapGround" @change="onMapGroundChange">
+            <option value="detailed">Chi tiết — đẹp</option>
+            <option value="plain">Đơn giản — dễ nhìn chiêu</option>
           </select>
         </label>
       </div>

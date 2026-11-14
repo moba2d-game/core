@@ -87,6 +87,13 @@ describe('practice range controls', () => {
     expect(source).toContain('source.setRenderFps');
     expect(source).toContain('id="practice-render-scale"');
     expect(source).toContain('source.setRenderScale');
+    expect(source).toContain('id="practice-map-ground"');
+    expect(source).toContain('source.setMapGround');
+    expect(source).toContain('Nền bản đồ');
+    expect(source).toContain('Chi tiết — đẹp');
+    expect(source).toContain('Đơn giản — dễ nhìn chiêu');
+    // Folded summary: named only when it is not the default.
+    expect(source).toMatch(/if \(mapGround\.value === 'plain'\) parts\.push/);
   });
 
   it('waits for a default reset and disables its button while kits are loading', () => {
@@ -110,9 +117,11 @@ describe('createHudInteractions — the Tab scoreboard', () => {
       renderQuality: 'auto',
       renderFps: 60,
       renderScale: 'auto',
+      mapGround: 'detailed',
       setRenderQuality: vi.fn(),
       setRenderFps: vi.fn(),
       setRenderScale: vi.fn(),
+      setMapGround: vi.fn(),
       pause: vi.fn(),
       unpause: vi.fn(),
     }) as any;
@@ -154,9 +163,11 @@ describe('createHudInteractions — the ways into the practice panel', () => {
       renderQuality: 'auto',
       renderFps: 60,
       renderScale: 'auto',
+      mapGround: 'detailed',
       setRenderQuality: vi.fn(),
       setRenderFps: vi.fn(),
       setRenderScale: vi.fn(),
+      setMapGround: vi.fn(),
       pause: vi.fn(),
       unpause: vi.fn(),
     }) as any;
@@ -311,6 +322,10 @@ describe('createHudInteractions — the ways into the practice panel', () => {
     (hud as any).setRenderScale(75);
     expect(game.setRenderScale).toHaveBeenCalledWith(75);
     expect((hud as any).renderScale).toBe('auto');
+
+    (hud as any).setMapGround('plain');
+    expect(game.setMapGround).toHaveBeenCalledWith('plain');
+    expect((hud as any).mapGround).toBe('detailed');
   });
 
   it('always opens: a second press cannot toggle an open panel shut', () => {
@@ -358,9 +373,11 @@ describe('createHudInteractions — Hồi Thành', () => {
       renderQuality: 'auto',
       renderFps: 60,
       renderScale: 'auto',
+      mapGround: 'detailed',
       setRenderQuality: vi.fn(),
       setRenderFps: vi.fn(),
       setRenderScale: vi.fn(),
+      setMapGround: vi.fn(),
       pause: vi.fn(),
       unpause: vi.fn(),
       recall: vi.fn(),

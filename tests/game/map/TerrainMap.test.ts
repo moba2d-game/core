@@ -122,7 +122,7 @@ describe('TerrainMap', () => {
 });
 
 describe('TerrainMap.draw and MapSummary.paintsOwnTerrain', () => {
-  const drawCounting = (paintsOwnTerrain?: boolean): number => {
+  const drawCounting = (paintsOwnTerrain?: boolean, mapGround?: 'detailed' | 'plain'): number => {
     let vertices = 0;
     for (const name of ['push', 'pop', 'fill', 'stroke', 'strokeWeight', 'noStroke', 'beginShape', 'endShape']) {
       vi.stubGlobal(name, vi.fn());
@@ -139,6 +139,7 @@ describe('TerrainMap.draw and MapSummary.paintsOwnTerrain', () => {
     });
     const game = {
       renderStressed: true,
+      mapGround,
       camera: { getBoundingBox: () => new Rectangle({ x: 0, y: 0, w: 6_400, h: 6_400 }) },
     };
     const terrainMap = new TerrainMap(game, { ...activeMap(6_400), paintsOwnTerrain });
@@ -153,5 +154,11 @@ describe('TerrainMap.draw and MapSummary.paintsOwnTerrain', () => {
 
   it('fills none of them when the pack paints its own terrain', () => {
     expect(drawCounting(true)).toBe(0);
+    expect(drawCounting(true, 'detailed')).toBe(0);
+  });
+
+  it('fills them all again once the player asks for the plain ground', () => {
+    expect(drawCounting(true, 'plain')).toBe(8);
+    expect(drawCounting(false, 'plain')).toBe(8);
   });
 });

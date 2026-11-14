@@ -221,17 +221,24 @@ export function signedArea2(v: readonly { x: number; y: number }[]): number {
 
 const clockwise = new WeakMap<object, boolean>();
 
+/** What a polygon is traced into: the 2D context's current path, or a `Path2D`. */
+type PathSink = Pick<CanvasRenderingContext2D, 'moveTo' | 'lineTo' | 'closePath'>;
+
 /**
- * Every polygon into one path, each traced the **same way round**. The path
- * is filled with the nonzero rule, and two overlapping walls wound opposite
- * ways would sum to zero where they overlap — a hole punched through the
- * stone exactly where two pieces meet. Editor maps wind both ways.
+ * Every polygon as one closed subpath, each traced the **same way round**.
+ * The result is filled with the nonzero rule, and two overlapping walls wound
+ * opposite ways would sum to zero where they overlap — a hole punched through
+ * the stone exactly where two pieces meet. Editor maps wind both ways.
+ *
+ * Two loops rather than an index-mapping closure: this runs per vertex, and
+ * the closure was one allocation per polygon per pass per frame.
  */
-export function trace(ctx: CanvasRenderingContext2D, polys: readonly SkinPolygon[], dx = 0, dy = 0): void {
-  ctx.beginPath();
-  for (const p of polys) {
+function tracePolygons(sink: PathSink, polys: readonly SkinPolygon[], dx: number, dy: number): void {
+  for (let k = 0; k < polys.length; k++) {
+    const p = polys[k];
     const v = p.vertices;
-    if (v.length < 3) continue;
+    const n = v.length;
+    if (n < 3) continue;
     let cw = clockwise.get(v);
     if (cw === undefined) {
       cw = signedArea2(v) > 0;
@@ -239,12 +246,100 @@ export function trace(ctx: CanvasRenderingContext2D, polys: readonly SkinPolygon
     }
     const ox = p.position.x + dx;
     const oy = p.position.y + dy;
-    const n = v.length;
-    const at = (i: number) => v[cw ? i : n - 1 - i];
-    ctx.moveTo(ox + at(0).x, oy + at(0).y);
-    for (let i = 1; i < n; i++) ctx.lineTo(ox + at(i).x, oy + at(i).y);
-    ctx.closePath();
+    if (cw) {
+      sink.moveTo(ox + v[0].x, oy + v[0].y);
+      for (let i = 1; i < n; i++) sink.lineTo(ox + v[i].x, oy + v[i].y);
+    } else {
+      sink.moveTo(ox + v[n - 1].x, oy + v[n - 1].y);
+      for (let i = n - 2; i >= 0; i--) sink.lineTo(ox + v[i].x, oy + v[i].y);
+    }
+    sink.closePath();
   }
+}
+
+/** Every polygon into the context's current path. See `tracePolygons`. */
+export function trace(ctx: CanvasRenderingContext2D, polys: readonly SkinPolygon[], dx = 0, dy = 0): void {
+  ctx.beginPath();
+  tracePolygons(ctx, polys, dx, dy);
+}
+
+/**
+ * One kind's paths (all walls in view, all bushes…), kept between frames.
+ *
+ * Tracing was most of what this skin cost in script: the full wall look walks
+ * every vertex four times a frame (shadow, outline, rim, stone), and a map's
+ * geometry never changes. So each pass's path is a `Path2D` in **world**
+ * coordinates, built with the same arithmetic `trace` uses, and rebuilt only
+ * when the *members* differ from the last frame's — which happens when the
+ * camera's box crosses a quadtree cell, not on every frame a player walks.
+ * The camera itself is deliberately not in the key (CLAUDE.md, "never key a
+ * render cache on the camera").
+ *
+ * Still one path per pass, exactly as before: a path per polygon would blend
+ * a translucent rim twice where two pieces meet, and is not pixel-identical.
+ */
+export class SkinPathCache {
+  private readonly members: SkinPolygon[] = [];
+  private readonly shapes: (readonly { x: number; y: number }[])[] = [];
+  private readonly paths: (Path2D | undefined)[] = [];
+  /** How often the members changed: what a test, or a profile, reads. */
+  rebuilds = 0;
+
+  /**
+   * @param offsets one per pass, world px — `{0,0}` for the body, a shadow's or
+   *   a rim's nudge for the others.
+   */
+  constructor(private readonly offsets: readonly { x: number; y: number }[]) {}
+
+  /** False where there is no `Path2D` (no DOM): the caller traces instead. */
+  static get supported(): boolean {
+    return typeof Path2D !== 'undefined';
+  }
+
+  /** Points the cache at this frame's polygons, dropping its paths if they are not last frame's. */
+  sync(polys: readonly SkinPolygon[]): void {
+    const members = this.members;
+    const shapes = this.shapes;
+    let same = members.length === polys.length;
+    // `vertices` too, not only the polygon: a polygon handed a new outline is
+    // a different shape under the same identity.
+    for (let i = 0; same && i < polys.length; i++) same = members[i] === polys[i] && shapes[i] === polys[i].vertices;
+    if (same) return;
+    members.length = polys.length;
+    shapes.length = polys.length;
+    for (let i = 0; i < polys.length; i++) {
+      members[i] = polys[i];
+      shapes[i] = polys[i].vertices;
+    }
+    this.paths.length = 0;
+    this.rebuilds++;
+  }
+
+  /** The path for pass `pass` of the polygons last given to `sync`. Built on first use, so the light look never builds a shadow. */
+  path(pass: number): Path2D {
+    let path = this.paths[pass];
+    if (!path) {
+      path = new Path2D();
+      tracePolygons(path, this.members, this.offsets[pass].x, this.offsets[pass].y);
+      this.paths[pass] = path;
+    }
+    return path;
+  }
+}
+
+const ORIGIN = { x: 0, y: 0 } as const;
+/** `paintWalls`' passes, in `SkinPathCache` order: stone, shadow, rim. */
+export const WALL_PASSES = [ORIGIN, WALL_SHADOW_OFFSET, { x: -3, y: -4 }] as const;
+/** `paintBushes`' passes: leaves, rim. */
+export const BUSH_PASSES = [ORIGIN, { x: -2, y: -3 }] as const;
+/** `paintWater`'s one pass. */
+export const WATER_PASSES = [ORIGIN] as const;
+
+/** `cache` when this platform can use it, having pointed it at `polys`. */
+function synced(cache: SkinPathCache | undefined, polys: readonly SkinPolygon[]): SkinPathCache | null {
+  if (!cache || !SkinPathCache.supported) return null;
+  cache.sync(polys);
+  return cache;
 }
 
 /** The floor under the part of the map in view. */
@@ -319,72 +414,114 @@ export function paintFloor(
  * `fill`/`stroke` call however many walls there are: the shadows first (so
  * no wall's shadow falls across a neighbour's top), then the stone, then the
  * outline and the rim.
+ *
+ * With a `cache` the passes draw kept `Path2D`s rather than re-tracing; the
+ * calls, their order and their coordinates are the same either way.
  */
-export function paintWalls(ctx: CanvasRenderingContext2D, walls: readonly SkinPolygon[], light: boolean): void {
+export function paintWalls(
+  ctx: CanvasRenderingContext2D,
+  walls: readonly SkinPolygon[],
+  light: boolean,
+  cache?: SkinPathCache
+): void {
   if (!walls.length) return;
   const patterns = terrainPatterns(ctx);
+  const kept = synced(cache, walls);
   ctx.save();
   if (!light) ctx.lineJoin = 'round';
   if (!light) {
-    trace(ctx, walls, WALL_SHADOW_OFFSET.x, WALL_SHADOW_OFFSET.y);
     ctx.fillStyle = WALL_SHADOW;
-    ctx.fill();
+    if (kept) ctx.fill(kept.path(1));
+    else {
+      trace(ctx, walls, WALL_PASSES[1].x, WALL_PASSES[1].y);
+      ctx.fill();
+    }
   }
   // Outline under the stone, not over it: stroked over the fill, a seam
   // between two touching wall pieces would show as a line across solid rock.
   // Filled on top, the inner seams vanish and only the outer half survives.
-  trace(ctx, walls);
   ctx.strokeStyle = WALL_OUTLINE;
   ctx.lineWidth = light ? LIGHT_OUTLINE_PX : 10;
-  ctx.stroke();
+  if (kept) ctx.stroke(kept.path(0));
+  else {
+    trace(ctx, walls);
+    ctx.stroke();
+  }
   if (!light) {
     // The lit rim: the same outline nudged up-left, so it peeks out only along
     // the north-west faces, under the stone like the outline.
-    trace(ctx, walls, -3, -4);
     ctx.strokeStyle = WALL_RIM;
     ctx.lineWidth = 4;
-    ctx.stroke();
-    trace(ctx, walls);
+    if (kept) ctx.stroke(kept.path(2));
+    else {
+      trace(ctx, walls, WALL_PASSES[2].x, WALL_PASSES[2].y);
+      ctx.stroke();
+      trace(ctx, walls);
+    }
   }
   ctx.fillStyle = (!light && patterns.wall) || css(WALL_RGB);
-  ctx.fill();
+  if (kept) ctx.fill(kept.path(0));
+  else ctx.fill();
   ctx.restore();
 }
 
-export function paintBushes(ctx: CanvasRenderingContext2D, bushes: readonly SkinPolygon[], light: boolean): void {
+export function paintBushes(
+  ctx: CanvasRenderingContext2D,
+  bushes: readonly SkinPolygon[],
+  light: boolean,
+  cache?: SkinPathCache
+): void {
   if (!bushes.length) return;
+  const kept = synced(cache, bushes);
   ctx.save();
   if (!light) ctx.lineJoin = 'round';
-  trace(ctx, bushes);
   ctx.strokeStyle = BUSH_OUTLINE;
   ctx.lineWidth = light ? LIGHT_OUTLINE_PX : 8;
-  ctx.stroke();
+  if (kept) ctx.stroke(kept.path(0));
+  else {
+    trace(ctx, bushes);
+    ctx.stroke();
+  }
   if (!light) {
-    trace(ctx, bushes, -2, -3);
     ctx.strokeStyle = BUSH_RIM;
     ctx.lineWidth = 3;
-    ctx.stroke();
-    trace(ctx, bushes);
+    if (kept) ctx.stroke(kept.path(1));
+    else {
+      trace(ctx, bushes, BUSH_PASSES[1].x, BUSH_PASSES[1].y);
+      ctx.stroke();
+      trace(ctx, bushes);
+    }
   }
   ctx.fillStyle = (!light && terrainPatterns(ctx).bush) || css(BUSH_RGB);
-  ctx.fill();
+  if (kept) ctx.fill(kept.path(0));
+  else ctx.fill();
   ctx.restore();
 }
 
-export function paintWater(ctx: CanvasRenderingContext2D, waters: readonly SkinPolygon[], light: boolean): void {
+export function paintWater(
+  ctx: CanvasRenderingContext2D,
+  waters: readonly SkinPolygon[],
+  light: boolean,
+  cache?: SkinPathCache
+): void {
   if (!waters.length) return;
+  const kept = synced(cache, waters);
+  const path = kept?.path(0);
   ctx.save();
   if (!light) ctx.lineJoin = 'round';
-  trace(ctx, waters);
+  if (!path) trace(ctx, waters);
   if (!light) {
     ctx.strokeStyle = WATER_SHORE;
     ctx.lineWidth = 14;
-    ctx.stroke();
+    if (path) ctx.stroke(path);
+    else ctx.stroke();
   }
   ctx.strokeStyle = WATER_OUTLINE;
   ctx.lineWidth = light ? LIGHT_OUTLINE_PX : 8;
-  ctx.stroke();
+  if (path) ctx.stroke(path);
+  else ctx.stroke();
   ctx.fillStyle = (!light && terrainPatterns(ctx).water) || css(WATER_RGB);
-  ctx.fill();
+  if (path) ctx.fill(path);
+  else ctx.fill();
   ctx.restore();
 }

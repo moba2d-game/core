@@ -26,6 +26,10 @@ import {
   paintFloor,
   paintWalls,
   paintWater,
+  BUSH_PASSES,
+  SkinPathCache,
+  WALL_PASSES,
+  WATER_PASSES,
 } from '@/game/render/terrainSkin';
 import TerrainField from './TerrainField';
 
@@ -523,13 +527,26 @@ export default class TerrainMap {
   /** The light/full terrain look, held across frames (`nextSkinHold`). */
   private skinHold = initialSkinHold();
 
+  /**
+   * The player's "Nền bản đồ: Đơn giản" (`Game.mapGround`): core's solid fills
+   * come back even under a map that paints its own terrain, and the pack's
+   * scenery leaves its decoration out (`api.render.plainGround`). Read per
+   * frame, so the setting takes effect on the next one.
+   */
+  private get plainGround(): boolean {
+    return this.game.mapGround === 'plain';
+  }
+
   draw(): void {
-    if (this.paintsOwnTerrain) {
+    if (this.paintsOwnTerrain && !this.plainGround) {
       // The pack paints the obstacles; zones are still core's to draw.
       this.drawZones();
       return;
     }
-    push();
+    // No p5 `push()`/`pop()` around this body: every painter below brackets
+    // its own state (`ctx.save` in the skin, `push` in zones, ripples and the
+    // rotated path), and a p5 push copies the whole renderer state — measured
+    // on a phone at about the cost of tracing every wall in view.
     const obstacles = this.getObstaclesInView();
 
     // One pass into three reused buckets, rather than three `filter` calls
@@ -568,11 +585,10 @@ export default class TerrainMap {
     // Paint order as it always was — water, ripples, bushes, walls — in the
     // textured skin (`render/terrainSkin.ts`). A rotated obstacle (none of the
     // shipped maps has one) keeps the old flat path, which knows how to turn.
-    this.paintGroup(waters, TerrainType.WATER, polys => paintWater(ctx, polys, light));
+    this.paintGroup(waters, TerrainType.WATER, paintWater, ctx, light, this._waterPaths);
     this.rippleEffect.draw();
-    this.paintGroup(bushes, TerrainType.BUSH, polys => paintBushes(ctx, polys, light));
-    this.paintGroup(walls, TerrainType.WALL, polys => paintWalls(ctx, polys, light));
-    pop();
+    this.paintGroup(bushes, TerrainType.BUSH, paintBushes, ctx, light, this._bushPaths);
+    this.paintGroup(walls, TerrainType.WALL, paintWalls, ctx, light, this._wallPaths);
   }
 
   /**
@@ -624,14 +640,29 @@ export default class TerrainMap {
 
   private readonly _flat: Obstacle[] = [];
   private readonly _skinned: Obstacle[] = [];
+  /** Each kind's paths, kept while the obstacles in view stay the same. See `SkinPathCache`. */
+  private readonly _waterPaths = new SkinPathCache(WATER_PASSES);
+  private readonly _bushPaths = new SkinPathCache(BUSH_PASSES);
+  private readonly _wallPaths = new SkinPathCache(WALL_PASSES);
 
-  private paintGroup(group: Obstacle[], type: string, paint: (polys: Obstacle[]) => void): void {
+  /**
+   * The painter and its arguments are passed through rather than closed over:
+   * three closures a frame, for a call made sixty times a second.
+   */
+  private paintGroup(
+    group: Obstacle[],
+    type: string,
+    paint: (ctx: CanvasRenderingContext2D, polys: Obstacle[], light: boolean, cache?: SkinPathCache) => void,
+    ctx: CanvasRenderingContext2D,
+    light: boolean,
+    cache: SkinPathCache
+  ): void {
     const flat = this._flat;
     const skinned = this._skinned;
     flat.length = 0;
     skinned.length = 0;
     for (const o of group) (o.angle === 0 ? skinned : flat).push(o);
-    paint(skinned);
+    paint(ctx, skinned, light, cache);
     this.drawObstacleGroup(flat, type);
   }
 

@@ -14,6 +14,21 @@ import { stressTier } from '../../src/game/render/renderStress';
  * question, and it has to be *the same answer*: a second rule on the pack side
  * is how Cao quietly stops meaning "draw everything".
  */
+describe('api.render.plainGround', () => {
+  const api = buildContentApi();
+
+  it('is true only for a player who chose the plain ground', () => {
+    expect(api.render.plainGround({ mapGround: 'plain' })).toBe(true);
+    expect(api.render.plainGround({ mapGround: 'detailed' })).toBe(false);
+  });
+
+  it('is the painted art for a game that cannot answer', () => {
+    expect(api.render.plainGround({})).toBe(false);
+    expect(api.render.plainGround(undefined)).toBe(false);
+    expect(api.render.plainGround(null)).toBe(false);
+  });
+});
+
 describe('api.render.stressTier', () => {
   const api = buildContentApi();
 

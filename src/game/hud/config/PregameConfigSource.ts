@@ -38,14 +38,17 @@ import { applyMode, matchModeFor, type MatchModeId } from '@/game/config/matchMo
 import { stashTemplateItems, type MatchTemplateSetup } from '@/game/config/matchTemplates';
 import type { MatchTeamId } from '@/game/config/MatchTeams';
 import {
+  mapGroundPreference,
   renderFpsPreference,
   renderQualityPreference,
   renderScalePreference,
   screenShakePreference,
+  setMapGroundPreference,
   setRenderFpsPreference,
   setRenderQualityPreference,
   setRenderScalePreference,
   setScreenShakePreference,
+  type MapGround,
   type RenderFps,
   type RenderScale,
 } from '@/game/config/renderPreferences';
@@ -443,6 +446,14 @@ export default class PregameConfigSource implements MatchConfigSource {
 
   setRenderScale(scale: RenderScale): void {
     setRenderScalePreference(scale);
+  }
+
+  get mapGround(): MapGround {
+    return mapGroundPreference();
+  }
+
+  setMapGround(ground: MapGround): void {
+    setMapGroundPreference(ground);
   }
 
   get screenShake(): boolean {

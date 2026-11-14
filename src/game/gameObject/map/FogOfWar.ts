@@ -868,33 +868,56 @@ export default class FogOfWar {
     return ids.join(',');
   }
 
+  /** Reused by `drawVisions` for each vertex's screen position. */
+  private readonly _screenScratch = { x: 0, y: 0 };
+
+  /**
+   * Erases every sight polygon out of the overlay, each through its own
+   * radial gradient.
+   *
+   * Straight onto the overlay's 2D context, issuing exactly what p5's
+   * `push / translate / beginShape / vertex / endShape(CLOSE) / pop` issued
+   * for the same polygon — the overlay is in `erase()` with no stroke, so that
+   * was always one `fill()` of one closed path. What is gone is p5's share: a
+   * renderer-state copy per polygon, and a `p5.Vector` per vertex from
+   * `worldToScreen`, on the one path in the frame whose vertex count grows with
+   * the size of the fight.
+   */
   drawVisions(): void {
     const allSightPoly = this.calculateSight();
+    const ctx = this.overlay.drawingContext as CanvasRenderingContext2D;
+    const camera = this.game.camera;
+    const scratch = this._screenScratch;
 
-    allSightPoly.forEach(({ object, sightPoly, radius, ring }: SightResult) => {
+    for (let i = 0; i < allSightPoly.length; i++) {
+      const { object, sightPoly, radius, ring } = allSightPoly[i];
       const { x, y, gradient } = this.prepareRadialGradient(
         object.position.x,
         object.position.y,
         radius,
         ring
       );
+      const count = sightPoly.length;
+      // p5's `endShape` draws nothing for an empty shape.
+      if (count === 0) continue;
 
-      // The gradient is defined around the origin (see prepareRadialGradient) so it
-      // can be shared across units/frames; translate the canvas to the unit's screen
-      // position and draw the polygon relative to that origin to line the two up.
-      // Canvas gradients paint using the CTM at fill time, not at creation time, so
-      // this reproduces exactly what passing absolute coordinates would have drawn.
-      this.overlay.push();
-      this.overlay.translate(x, y);
-      this.overlay.drawingContext.fillStyle = gradient;
-      this.overlay.beginShape();
-      sightPoly.forEach((v: { x: number; y: number }) => {
-        const pos = this.game.camera.worldToScreen(v.x, v.y);
-        this.overlay.vertex(pos.x - x, pos.y - y);
-      });
-      this.overlay.endShape(this.overlay.CLOSE);
-      this.overlay.pop();
-    });
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.fillStyle = gradient;
+      ctx.beginPath();
+      for (let k = 0; k < count; k++) {
+        const v = sightPoly[k];
+        // `worldToScreen`'s own arithmetic, minus the vector it allocates.
+        const pos = camera.worldToScreenInto
+          ? camera.worldToScreenInto(v.x, v.y, scratch)
+          : camera.worldToScreen(v.x, v.y);
+        if (k === 0) ctx.moveTo(pos.x - x, pos.y - y);
+        else ctx.lineTo(pos.x - x, pos.y - y);
+      }
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+    }
   }
 
   prepareRadialGradient(

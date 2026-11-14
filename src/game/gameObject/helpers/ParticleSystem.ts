@@ -93,6 +93,11 @@ export default class ParticleSystem extends GameObject {
   }
 
   draw(limit = Infinity): void {
+    // Nothing to paint and no hook to run: the p5 `push()`/`pop()` below would
+    // bracket nothing, and a p5 push copies the whole renderer state. The
+    // terrain's ripple system is the standing case — it lives for the whole
+    // match and is empty unless a champion is wading.
+    if (this.particles.length === 0 && !this.preDrawFn && !this.postDrawFn) return;
     push();
     this.preDrawFn?.(this.particles);
     const length = this.particles.length;

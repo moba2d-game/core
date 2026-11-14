@@ -22,7 +22,7 @@
  */
 import { markRaw, reactive, toRaw } from 'vue';
 import type Game from '@/game/Game';
-import type { RenderFps, RenderScale } from '@/game/Game';
+import type { MapGround, RenderFps, RenderScale } from '@/game/Game';
 import type MatchDirector from '@/game/MatchDirector';
 import type Camera from '@/game/gameObject/map/Camera';
 import type { RenderQuality } from '@/game/managers/ObjectManager';
@@ -159,6 +159,8 @@ export interface HudInteractions {
   setRenderQuality(quality: RenderQuality): void;
   setRenderFps(fps: RenderFps): void;
   setRenderScale(scale: RenderScale): void;
+  readonly mapGround: MapGround;
+  setMapGround(ground: MapGround): void;
   /** The camera-shake toggle — `Game.screenShake` / `Game.setScreenShake`. */
   readonly screenShake: boolean;
   setScreenShake(enabled: boolean): void;
@@ -570,6 +572,12 @@ export function createHudInteractions(game: Game): HudInteractions {
     },
     setRenderScale(scale: RenderScale): void {
       game.setRenderScale(scale);
+    },
+    get mapGround(): MapGround {
+      return game.mapGround;
+    },
+    setMapGround(ground: MapGround): void {
+      game.setMapGround(ground);
     },
     get screenShake(): boolean {
       return game.screenShake;

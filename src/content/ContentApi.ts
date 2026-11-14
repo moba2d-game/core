@@ -1,6 +1,7 @@
 import AssetManager, { type AssetHandle } from '@/managers/AssetManager';
 import { stressTier } from '@/game/render/renderStress';
 import type { RenderQuality } from '@/game/managers/ObjectManager';
+import type { MapGround } from '@/game/config/renderPreferences';
 import { packAsset } from '@/game/config/packAsset';
 import { seededRandom, seededShuffle } from '@/game/matchSeed';
 
@@ -256,6 +257,13 @@ export interface ContentApi {
    * picture itself gets simpler. A map's scenery is a large share of a weak
    * phone's frame and had no way to ask. Read-only on purpose: the tier is
    * measured, and a pack does not get to set it.
+   *
+   * `api.render.plainGround(this.game)` is the player's "Nền bản đồ: Đơn
+   * giản": core is drawing its solid walls, bushes and water again, so a
+   * pack's scenery **leaves its decorative ground out** and keeps only what
+   * has to be read to play (a tide line, a gate, a lantern). Contract 25 — a
+   * pack whose floor is older feature-detects it and treats a missing answer
+   * as `false`. Read-only for the same reason: it is the player's choice.
    */
   render: typeof RENDER;
 
@@ -308,6 +316,11 @@ const RENDER = Object.freeze({
       | null
       | undefined
   ): 0 | 1 | 2 => stressTier(game?.renderQuality, game?.renderStressed, game?.deeplyStressed),
+  // `object`, not a shape with one optional member: a pack hands over its own
+  // `this.game`, typed however that pack types it, and a weak type refuses
+  // every one that does not happen to declare `mapGround`.
+  plainGround: (game: object | null | undefined): boolean =>
+    (game as { mapGround?: MapGround } | null | undefined)?.mapGround === 'plain',
 });
 const DAMAGE_TEXT = Object.freeze({ dmg, dmgValue, dmgRange, dmgRangeValue, heal, tint, pct });
 

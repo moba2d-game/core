@@ -78,6 +78,25 @@ describe('ARAM paints its own ground', () => {
     expect(factory(stranger as never, createGame() as never)).toBeNull();
   });
 
+  it('paints nothing once the player asks for the plain ground, and again when they change back', async () => {
+    const factory = makeReferencePack(buildContentApi()).slotObjects![SCENERY_ROLE];
+    const g = await geometry();
+    const slot = g.slots.neutral.find(candidate => candidate.role === SCENERY_ROLE)!;
+    const game = createGame() as unknown as { mapGround?: string };
+    const made = factory(slot, game as never) as unknown as { tiles: TileCache; draw(): void };
+    const blit = vi.spyOn(made.tiles, 'draw').mockImplementation(() => {});
+    vi.stubGlobal('drawingContext', {});
+
+    game.mapGround = 'plain';
+    made.draw();
+    expect(blit).not.toHaveBeenCalled();
+
+    // The same object, the next frame: nothing was torn down to get here.
+    game.mapGround = 'detailed';
+    made.draw();
+    expect(blit).toHaveBeenCalledTimes(1);
+  });
+
   it('lets its tiles go when the object is removed', async () => {
     const factory = makeReferencePack(buildContentApi()).slotObjects![SCENERY_ROLE];
     const g = await geometry();

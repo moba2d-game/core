@@ -25,10 +25,18 @@ export type RenderFps = 30 | 60;
  */
 export type RenderScale = 'auto' | 100 | 75 | 50;
 
+/**
+ * What the ground of a map looks like: the pack's painted art, or core's
+ * solid polygons with nothing decorative on them — for a player who wants to
+ * read the fight and the spells, not the scenery.
+ */
+export type MapGround = 'detailed' | 'plain';
+
 const RENDER_QUALITY_STORAGE_KEY = 'moba2d.renderQuality';
 const RENDER_FPS_STORAGE_KEY = 'moba2d.renderFps';
 const RENDER_SCALE_STORAGE_KEY = 'moba2d.renderScale';
 const SCREEN_SHAKE_STORAGE_KEY = 'moba2d.screenShake';
+const MAP_GROUND_STORAGE_KEY = 'moba2d.mapGround';
 
 export function renderQualityPreference(): RenderQuality {
   try {
@@ -86,6 +94,23 @@ export function setRenderScalePreference(scale: RenderScale): void {
       RENDER_SCALE_STORAGE_KEY,
       scale === 100 || scale === 75 || scale === 50 ? String(scale) : 'auto'
     );
+  } catch {
+    /* storage blocked: the live setting still works */
+  }
+}
+
+export function mapGroundPreference(): MapGround {
+  try {
+    if (window.localStorage.getItem(MAP_GROUND_STORAGE_KEY) === 'plain') return 'plain';
+  } catch {
+    /* storage blocked: use the painted ground */
+  }
+  return 'detailed';
+}
+
+export function setMapGroundPreference(ground: MapGround): void {
+  try {
+    window.localStorage.setItem(MAP_GROUND_STORAGE_KEY, ground === 'plain' ? 'plain' : 'detailed');
   } catch {
     /* storage blocked: the live setting still works */
   }
