@@ -1,4 +1,6 @@
 import AssetManager, { type AssetHandle } from '@/managers/AssetManager';
+import { stressTier } from '@/game/render/renderStress';
+import type { RenderQuality } from '@/game/managers/ObjectManager';
 import { packAsset } from '@/game/config/packAsset';
 import { seededRandom, seededShuffle } from '@/game/matchSeed';
 
@@ -244,6 +246,20 @@ export interface ContentApi {
   text: typeof DAMAGE_TEXT;
 
   /**
+   * How much a pack's own art is allowed to give up this frame.
+   *
+   * `api.render.stressTier(this.game)` answers `0 | 1 | 2` — the same number
+   * core's fog, minimap and combat text read (`render/renderStress.ts`): 0 is
+   * a machine keeping up or a player who chose Cao, and **must draw exactly
+   * what the art always drew**; 1 is a machine that is late, where decoration
+   * goes; 2 is one that is drowning (or a player who chose Thấp), where the
+   * picture itself gets simpler. A map's scenery is a large share of a weak
+   * phone's frame and had no way to ask. Read-only on purpose: the tier is
+   * measured, and a pack does not get to set it.
+   */
+  render: typeof RENDER;
+
+  /**
    * A bare local key (`'spell_ahri_e'`) resolves against whichever pack
    * registered it first — the shape every `packs/riot/spells/*.ts` file
    * already calls this with, unqualified, and keeps working unqualified.
@@ -285,6 +301,14 @@ export interface ContentApi {
  * The description helpers, grouped so a spell file can lift them out at module
  * scope the way it already lifts `Spell` — `const dmg = api.text.dmg;`.
  */
+const RENDER = Object.freeze({
+  stressTier: (
+    game:
+      | { renderQuality?: RenderQuality; renderStressed?: boolean; deeplyStressed?: boolean }
+      | null
+      | undefined
+  ): 0 | 1 | 2 => stressTier(game?.renderQuality, game?.renderStressed, game?.deeplyStressed),
+});
 const DAMAGE_TEXT = Object.freeze({ dmg, dmgValue, dmgRange, dmgRangeValue, heal, tint, pct });
 
 const COMBAT = Object.freeze({
@@ -473,6 +497,7 @@ export function buildContentApi(): ContentApi {
     terrain: TERRAIN,
     utils: UTILS,
     text: DAMAGE_TEXT,
+    render: RENDER,
     asset: packAsset,
     renderableAsset: (handle: AssetHandle | undefined, label?: string) =>
       AssetManager.renderable(handle, label) as p5.Image | p5.Element,

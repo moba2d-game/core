@@ -2,6 +2,7 @@ import type { Chain } from './chain';
 import type { LegRig } from './legRig';
 import type { Spine } from './spine';
 import type { ResolvedRig } from './creatureSpec';
+import { cssColor } from '@/game/render/cssColor';
 
 /**
  * The p5 half of a procedural creature, and the only file here that draws.
@@ -190,32 +191,80 @@ export function drawSpineBody(
   if (ring.length < 3) return;
   const [red, green, blue] = body.color;
 
-  push();
+  // The raw 2D context, not p5: every champion carries one of these, and
+  // `beginShape`/`curveVertex`/`endShape` allocate an array per vertex and
+  // then walk them again to do what `traceClosedCurve` does in one pass.
+  const ctx = drawingContext as CanvasRenderingContext2D;
+  ctx.save();
   if (body.glow > 0) {
-    noStroke();
-    fill(red, green, blue, alpha * 0.16 * body.glow);
+    // One fill per joint on purpose: the halos overlap and are translucent,
+    // so a single path would lose the brighter spine the overlaps build.
+    ctx.fillStyle = cssColor(red, green, blue, Math.round(alpha * 0.16 * body.glow));
     for (let i = 0; i < spine.joints.length; i++) {
       const joint = spine.joints[i];
-      circle(joint.x, joint.y, spine.widthAt(i) * 2 * (1 + body.glow * 0.7));
+      const radius = spine.widthAt(i) * (1 + body.glow * 0.7);
+      // `ellipse` + `closePath`, the path p5's `circle` issues, not `arc`:
+      // the two rasterise a few levels apart on a GPU canvas.
+      ctx.beginPath();
+      ctx.ellipse(joint.x, joint.y, radius, radius, 0, 0, Math.PI * 2);
+      ctx.closePath();
+      ctx.fill();
     }
   }
 
-  fill(red, green, blue, alpha);
+  ctx.fillStyle = cssColor(red, green, blue, Math.round(alpha));
   // A rim **darker** than the fill, and thin.
   //
   // It was lighter, and on a map this dark a bright even outline reads as
   // exactly what it is — a polygon somebody stroked — rather than as an edge.
   // Darker is the shadow a body casts along its own silhouette, which is what
   // the eye expects and what stops the shape looking like a debug draw.
-  stroke(red * 0.45, green * 0.45, blue * 0.45, alpha);
-  strokeWeight(1);
-  beginShape();
-  curveVertex(ring[ring.length - 1].x, ring[ring.length - 1].y);
-  for (const point of ring) curveVertex(point.x, point.y);
-  curveVertex(ring[0].x, ring[0].y);
-  curveVertex(ring[1].x, ring[1].y);
-  endShape(CLOSE);
-  pop();
+  ctx.strokeStyle = cssColor(
+    Math.round(red * 0.45),
+    Math.round(green * 0.45),
+    Math.round(blue * 0.45),
+    Math.round(alpha)
+  );
+  ctx.lineWidth = 1;
+  traceClosedCurve(ctx, ring);
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+}
+
+/**
+ * A closed Catmull-Rom through `ring`, as one Canvas2D path.
+ *
+ * This is p5's own `curveVertex` conversion (tightness 0: each control point
+ * a sixth of the chord between a point's neighbours), written out so that the
+ * outline is the same outline to the pixel — including the one thing p5 does
+ * that nobody would write on purpose: its closed curve ends with a straight
+ * `lineTo` to the *second* point before closing. Kept, because dropping it
+ * moves pixels at the neck and this change is meant to move none.
+ */
+export function traceClosedCurve(
+  ctx: Pick<CanvasRenderingContext2D, 'beginPath' | 'moveTo' | 'bezierCurveTo' | 'lineTo' | 'closePath'>,
+  ring: readonly { x: number; y: number }[]
+): void {
+  const n = ring.length;
+  ctx.beginPath();
+  ctx.moveTo(ring[0].x, ring[0].y);
+  for (let k = 0; k < n; k++) {
+    const before = ring[(k + n - 1) % n];
+    const from = ring[k];
+    const to = ring[(k + 1) % n];
+    const after = ring[(k + 2) % n];
+    ctx.bezierCurveTo(
+      from.x + (to.x - before.x) / 6,
+      from.y + (to.y - before.y) / 6,
+      to.x + (from.x - after.x) / 6,
+      to.y + (from.y - after.y) / 6,
+      to.x,
+      to.y
+    );
+  }
+  ctx.lineTo(ring[1].x, ring[1].y);
+  ctx.closePath();
 }
 
 /**

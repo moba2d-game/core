@@ -526,22 +526,45 @@ export default class Turret extends AttackableUnit {
     const pos = this.position;
     const size = this.stats.size.value;
 
-    push();
     if (this.isDead) {
       // Rubble, no health bar, no threat ring — plus the one number a fallen
       // tower owes the player: when it stands back up.
+      push();
       this.drawRubble(pos, size);
       this.drawRebuildTimer(pos, size);
       pop();
       return;
     }
 
+    this.drawTower(drawingContext as CanvasRenderingContext2D, pos, size);
+
+    this.drawHealthBar();
+  }
+
+  /**
+   * The standing tower, on the raw 2D context.
+   *
+   * Same shapes, same colours and the same order as the p5 calls this
+   * replaced — the pad, the trim, the octagon, the barrel, the core. What is
+   * gone is p5 around them: `fill()` parsing a colour, `circle()` normalising
+   * its arguments, a `push`/`translate`/`rotate`/`pop` for eight vertices.
+   * Measured on a Helio P35 phone that wrapper was most of the 4-5ms four
+   * towers cost a frame.
+   */
+  private drawTower(ctx: CanvasRenderingContext2D, pos: p5.Vector, size: number) {
+    const x = pos.x;
+    const y = pos.y;
+    const TAU = Math.PI * 2;
+    ctx.save();
+
     // threat ring, only while something is in range
     if (this.target) {
-      noFill();
-      stroke(255, 90, 60, 60);
-      strokeWeight(3);
-      circle(pos.x, pos.y, this.attackRange * 2);
+      ctx.strokeStyle = cssColor(255, 90, 60, 60);
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.ellipse(x, y, this.attackRange, this.attackRange, 0, 0, TAU);
+      ctx.closePath();
+      ctx.stroke();
     }
 
     // The stone stays dark, but the pad and tower take the base's team colour
@@ -550,54 +573,84 @@ export default class Turret extends AttackableUnit {
     const team = teamColors(this.teamId);
 
     // stone base
-    noStroke();
-    fill(28, 30, 38, 230);
-    circle(pos.x, pos.y, size * 1.15);
-    fill(team.trim[0], team.trim[1], team.trim[2]);
-    circle(pos.x, pos.y, size);
+    ctx.fillStyle = cssColor(28, 30, 38, 230);
+    ctx.beginPath();
+    ctx.ellipse(x, y, size * 0.575, size * 0.575, 0, 0, TAU);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = cssColor(team.trim[0], team.trim[1], team.trim[2]);
+    ctx.beginPath();
+    ctx.ellipse(x, y, size * 0.5, size * 0.5, 0, 0, TAU);
+    ctx.closePath();
+    ctx.fill();
 
     // body — an octagonal tower
-    push();
-    translate(pos.x, pos.y);
-    rotate(this._spin);
-    fill(team.body[0], team.body[1], team.body[2]);
-    stroke(20, 22, 28);
-    strokeWeight(3);
-    beginShape();
+    ctx.fillStyle = cssColor(team.body[0], team.body[1], team.body[2]);
+    ctx.strokeStyle = cssColor(20, 22, 28);
+    ctx.lineWidth = 3;
+    // Rotated by the context rather than by folding the spin into the
+    // vertices: the two are the same octagon on paper and were not the same
+    // pixels on a PowerVR GPU canvas, where the outline's antialiasing moved
+    // by up to 37 levels. This change is meant to move none.
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(this._spin);
+    ctx.beginPath();
     for (let i = 0; i < 8; i++) {
-      const a = (TWO_PI / 8) * i;
-      vertex(cos(a) * size * 0.34, sin(a) * size * 0.34);
+      const a = (TAU / 8) * i;
+      const vx = Math.cos(a) * size * 0.34;
+      const vy = Math.sin(a) * size * 0.34;
+      if (i === 0) ctx.moveTo(vx, vy);
+      else ctx.lineTo(vx, vy);
     }
-    endShape(CLOSE);
-    pop();
+    // p5's `endShape(CLOSE)` walks back to the first vertex twice before it
+    // closes the path. Redundant, and kept: the GPU rasteriser picks a
+    // different path for the outline without them.
+    ctx.lineTo(size * 0.34, 0);
+    ctx.lineTo(size * 0.34, 0);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
 
     // the barrel points at whatever it is shooting
-    const aim = this.target ? p5.Vector.sub(this.target.position, pos) : createVector(0, -1);
-    if (aim.magSq() === 0) aim.set(0, -1);
-    aim.setMag(size * 0.55);
-    stroke(this.target ? [255, 170, 70] : [130, 136, 150]);
-    strokeWeight(9);
-    line(pos.x, pos.y, pos.x + aim.x, pos.y + aim.y);
+    let aimX = this.target ? this.target.position.x - x : 0;
+    let aimY = this.target ? this.target.position.y - y : -1;
+    let reach = Math.hypot(aimX, aimY);
+    if (reach === 0) {
+      aimX = 0;
+      aimY = -1;
+      reach = 1;
+    }
+    const barrel = (size * 0.55) / reach;
+    ctx.strokeStyle = this.target ? cssColor(255, 170, 70) : cssColor(130, 136, 150);
+    ctx.lineWidth = 9;
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x + aimX * barrel, y + aimY * barrel);
+    ctx.stroke();
 
     // core: brightens when charged, flares on the shot
     const charge = 1 - Math.max(0, this._attackCooldown) / this.attackInterval;
     const flash = Math.max(0, this._fireFlash) / 220;
-    noStroke();
-    fill(255, 200 - 80 * (1 - charge), 90, 120 + 135 * charge);
-    circle(pos.x, pos.y, size * 0.26 + flash * size * 0.35);
+    ctx.fillStyle = cssColor(255, Math.round(200 - 80 * (1 - charge)), 90, Math.round(120 + 135 * charge));
+    ctx.beginPath();
+    const coreRadius = Math.max(0, (size * 0.26 + flash * size * 0.35) / 2);
+    ctx.ellipse(x, y, coreRadius, coreRadius, 0, 0, TAU);
+    ctx.closePath();
+    ctx.fill();
 
     if (this._hitFlash > 0) {
-      noFill();
-      stroke(255, 80, 80, (this._hitFlash / 180) * 220);
-      strokeWeight(5);
-      circle(pos.x, pos.y, size * 1.2);
+      ctx.strokeStyle = cssColor(255, 80, 80, Math.round((this._hitFlash / 180) * 220));
+      ctx.lineWidth = 5;
+      ctx.beginPath();
+      ctx.ellipse(x, y, size * 0.6, size * 0.6, 0, 0, TAU);
+      ctx.closePath();
+      ctx.stroke();
     }
-    pop();
-
-    this.drawHealthBar();
+    ctx.restore();
   }
 
-  /** The clock on the rubble. A clock something pinned to forever draws nothing. */
   drawRebuildTimer(pos: p5.Vector, size: number) {
     const left = this.deathData?.reviveAfter ?? 0;
     if (!Number.isFinite(left)) return;

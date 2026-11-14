@@ -1,5 +1,5 @@
 {
-  "contract": 23,
+  "contract": 24,
   "surface": [
     "AoePulse:class",
     "AreaSpellObject:class",
@@ -226,6 +226,8 @@
     "layers.TRAIL_Z_INDEX:number",
     "layers.UNIT_Z_INDEX:number",
     "lazy:function",
+    "render:object",
+    "render.stressTier:function",
     "renderableAsset:function",
     "requireChargeSpec:function",
     "terrain:object",

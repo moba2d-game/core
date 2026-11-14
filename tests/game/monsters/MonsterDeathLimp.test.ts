@@ -81,8 +81,19 @@ const stubDrawingContext = () =>
     stroke: vi.fn(),
     fill: vi.fn(),
     drawImage: vi.fn(),
+    // The spine body's outline: `drawSpineBody` traces it here, not through
+    // p5's `beginShape`, so this is what says "the body was painted".
+    moveTo: vi.fn(),
+    lineTo: vi.fn(),
+    closePath: vi.fn(),
+    ellipse: vi.fn(),
+    bezierCurveTo: vi.fn(),
     globalAlpha: 1,
   });
+
+/** The spine body's outline calls: one bezier a ring point, every painted frame. */
+const bodyOutline = () =>
+  (drawingContext as unknown as { bezierCurveTo: ReturnType<typeof vi.fn> }).bezierCurveTo;
 
 beforeEach(() => {
   spies = stubGameGlobals();
@@ -98,10 +109,10 @@ describe('a camp with a rig does not blink out', () => {
     settle(camp);
     camp.die({ reviveAfter: 100_000 });
 
-    spies.beginShape.mockClear();
+    bodyOutline().mockClear();
     drawFrames(camp, DEATH_LIMP_MS / 2);
 
-    expect(spies.beginShape, 'the corpse stopped drawing the frame it died').toHaveBeenCalled();
+    expect(bodyOutline(), 'the corpse stopped drawing the frame it died').toHaveBeenCalled();
   });
 
   it('and stops once it has faded', () => {
@@ -110,11 +121,11 @@ describe('a camp with a rig does not blink out', () => {
     camp.die({ reviveAfter: 100_000 });
 
     drawFrames(camp, DEATH_LIMP_MS + FRAME_MS * 2);
-    spies.beginShape.mockClear();
+    bodyOutline().mockClear();
     drawFrames(camp, DEATH_LIMP_MS);
 
     expect(
-      spies.beginShape,
+      bodyOutline(),
       'the corpse is still being painted long after it faded'
     ).not.toHaveBeenCalled();
   });
