@@ -38,6 +38,9 @@ describe('presentHit', () => {
       beginPath: vi.fn(),
       arc: vi.fn(),
       clip: vi.fn(),
+      stroke: vi.fn(),
+      fill: vi.fn(),
+      drawImage: vi.fn(),
     });
     game = createGame();
     shake = vi.fn();
@@ -64,19 +67,18 @@ describe('presentHit', () => {
     // `drawAvatar` colours the team ring by `isAllied`, which reads the player.
     game.setPlayer(victim);
     victim.animatedValues.displaySize = 40;
-    const whiteFills = () =>
-      spies.fill.mock.calls.filter(
-        ([r, g, b, a]) => r === 255 && g === 255 && b === 255 && typeof a === 'number'
-      );
+    // The disc is native, like the frame it sits in: a fill of the body's own
+    // circle in white, at the strength the hit earned.
+    const ctx = drawingContext as unknown as { fillStyle: string; fill: ReturnType<typeof vi.fn> };
 
     victim.drawAvatar();
-    expect(whiteFills()).toHaveLength(0);
+    expect(ctx.fill).not.toHaveBeenCalled();
 
     victim.presentHit({ amount: 30, type: 'PHYSICAL' });
     victim.drawAvatar();
-    expect(whiteFills()).toHaveLength(1);
-    expect(whiteFills()[0][3]).toBeCloseTo(150, 5);
-    expect(spies.circle).toHaveBeenCalledWith(0, 0, 40);
+    expect(ctx.fill).toHaveBeenCalledTimes(1);
+    expect(ctx.fillStyle).toBe('rgba(255, 255, 255, 0.588)');
+    expect(vi.mocked(drawingContext.arc)).toHaveBeenCalledWith(0, 0, 20, 0, Math.PI * 2);
   });
 
   it('does not light a corpse', () => {
@@ -85,8 +87,10 @@ describe('presentHit', () => {
     victim.die({ reviveAfter: 1000 });
     victim.presentHit({ amount: 30, type: 'PHYSICAL' });
     victim.drawAvatar();
-    const white = spies.fill.mock.calls.filter(([r, g, b]) => r === 255 && g === 255 && b === 255);
-    expect(white).toHaveLength(0);
+    // A corpse gets the dead shade and nothing white over it.
+    const ctx = drawingContext as unknown as { fillStyle: string };
+    expect(ctx.fillStyle).toBe('rgba(0, 0, 0, 0.784)');
+    expect(vi.mocked(drawingContext.fill)).toHaveBeenCalledTimes(1);
   });
 
   it('shakes the camera only when the player is the one hit', () => {

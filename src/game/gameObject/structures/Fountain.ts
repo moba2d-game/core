@@ -1,3 +1,4 @@
+import { cssColor } from '@/game/render/cssColor';
 import { Circle, Rectangle } from '@/libs/quadtree';
 import GameObject from '@/game/gameObject/GameObject';
 import type { GameObjectRuntimeContext } from '@/game/gameObject/GameObject';
@@ -201,19 +202,29 @@ export default class Fountain extends GameObject {
     const alpha = this.shopRingAlpha();
     if (alpha <= 0) return;
 
-    push();
-    translate(this.position.x, this.position.y);
-    noFill();
-    stroke(150, 235, 255, alpha * SHOP_RING_ALPHA);
-    strokeWeight(alpha === 1 ? 3 : 2);
-    // Dashed by hand — p5 has no line dash — and it stays dashed inside the
-    // reach too: a solid ring reads as a wall, and this one stops nothing.
-    const step = TWO_PI / SHOP_RING_SEGMENTS;
+    // Dashed by hand, and it stays dashed inside the reach too: a solid ring
+    // reads as a wall, and this one stops nothing.
+    //
+    // **One path, one stroke.** This was forty `arc()` calls, each its own
+    // stroke, and on a phone's GPU canvas the cost of a frame is the number of
+    // draw operations far more than what they cover: with the player standing
+    // in the reach this ring alone was a tenth of every draw call in a
+    // ten-champion fight. The dashes are the same forty arcs, as subpaths.
+    const ctx = drawingContext;
+    const { x, y } = this.position;
+    const r = this.shopRadius;
+    const step = (Math.PI * 2) / SHOP_RING_SEGMENTS;
+    ctx.save();
+    ctx.strokeStyle = cssColor(150, 235, 255, alpha * SHOP_RING_ALPHA);
+    ctx.lineWidth = alpha === 1 ? 3 : 2;
+    ctx.beginPath();
     for (let i = 0; i < SHOP_RING_SEGMENTS; i++) {
       const a0 = step * i;
-      arc(0, 0, this.shopRadius * 2, this.shopRadius * 2, a0, a0 + step * 0.55);
+      ctx.moveTo(x + Math.cos(a0) * r, y + Math.sin(a0) * r);
+      ctx.arc(x, y, r, a0, a0 + step * 0.55);
     }
-    pop();
+    ctx.stroke();
+    ctx.restore();
   }
 
   /**

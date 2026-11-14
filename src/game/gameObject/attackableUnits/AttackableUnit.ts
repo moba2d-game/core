@@ -49,6 +49,8 @@ import {
 import { amplifiedAbilityDamage, type AmplificationSource } from '@/game/combat/Amplification';
 import { breakStealthOn } from '@/game/combat/StealthBreak';
 import { isNetClient } from '@/game/net/netRole';
+import { cssColor } from '@/game/render/cssColor';
+import { drawImageCentered } from '@/game/render/nativeImage';
 import { resolveVisionTuning } from '@/game/config/mapTuning';
 
 export interface AttackableUnitOptions extends Omit<GameObjectOptions, 'game'> {
@@ -613,27 +615,32 @@ export default class AttackableUnit extends GameObject {
   }
 
   drawAvatar() {
-    let pos = this.position;
-    let { displaySize: size, alpha } = this.animatedValues;
+    const pos = this.position;
+    const { displaySize: size, alpha } = this.animatedValues;
 
-    push();
-    noStroke();
-    fill(240, alpha);
-
+    // Native context, not p5: this runs for every unit on screen every frame,
+    // and `push`/`fill([...])`/`stroke([...])`/`circle`/`pop` measured ~0.6ms
+    // per champion on a Helio P35 — more than the picture it frames. Same
+    // geometry and colours as the p5 version; `save`/`restore` is what `push`/
+    // `pop` were here for, so no style leaks into whatever p5 draws next.
+    const ctx = drawingContext;
+    ctx.save();
     this.drawBody(pos.x, pos.y, size, alpha);
     this.drawHitFlash(pos.x, pos.y, size);
 
-    stroke(this.isAllied ? [0, 255, 0, alpha] : [255, 0, 0, alpha]);
-    strokeWeight(2);
-    noFill();
-    circle(pos.x, pos.y, size);
+    ctx.beginPath();
+    ctx.arc(pos.x, pos.y, size / 2, 0, Math.PI * 2);
+    ctx.strokeStyle = this.isAllied ? cssColor(0, 255, 0, alpha) : cssColor(255, 0, 0, alpha);
+    ctx.lineWidth = 2;
+    ctx.stroke();
 
     if (this.isDead) {
-      noStroke();
-      fill(0, 200);
-      circle(pos.x, pos.y, size);
+      // The same disc as the ring's path, so it shades the inner half of the
+      // ring exactly as the second `circle` did.
+      ctx.fillStyle = cssColor(0, 0, 0, 200);
+      ctx.fill();
     }
-    pop();
+    ctx.restore();
   }
 
   /**
@@ -654,7 +661,7 @@ export default class AttackableUnit extends GameObject {
     drawingContext.beginPath();
     drawingContext.arc(x, y, size / 2, 0, TWO_PI);
     drawingContext.clip();
-    image(AssetManager.renderable(this.avatar), x, y, size, size);
+    drawImageCentered(drawingContext, AssetManager.renderable(this.avatar), x, y, size, size);
     drawingContext.restore();
   }
 
@@ -669,9 +676,13 @@ export default class AttackableUnit extends GameObject {
   protected drawHitFlash(x: number, y: number, size: number): void {
     if (this.hitFlashMs <= 0 || this.hitFlashTotalMs <= 0 || this.isDead) return;
     const strength = Math.min(1, this.hitFlashMs / this.hitFlashTotalMs);
-    noStroke();
-    fill(255, 255, 255, HIT_FLASH_PEAK_ALPHA * strength);
-    circle(x, y, size);
+    // Native, like the frame it sits in. Every caller is already inside a
+    // `save` or a p5 `push`, which is what puts the fill style back.
+    const ctx = drawingContext;
+    ctx.fillStyle = cssColor(255, 255, 255, HIT_FLASH_PEAK_ALPHA * strength);
+    ctx.beginPath();
+    ctx.arc(x, y, size / 2, 0, Math.PI * 2);
+    ctx.fill();
   }
 
   drawDir() {

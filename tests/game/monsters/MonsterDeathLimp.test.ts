@@ -77,6 +77,10 @@ const stubDrawingContext = () =>
     beginPath: vi.fn(),
     arc: vi.fn(),
     clip: vi.fn(),
+    // The team ring and the dead shade `drawAvatar` paints around the body.
+    stroke: vi.fn(),
+    fill: vi.fn(),
+    drawImage: vi.fn(),
     globalAlpha: 1,
   });
 

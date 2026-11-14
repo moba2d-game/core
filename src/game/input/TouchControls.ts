@@ -39,6 +39,8 @@ import { resolveSpellAim, type AimCandidate, type SpellAimResult } from './Spell
 import type { ActivationPattern, TargetingMode, Vec2 } from '@/game/spell/runtime/types';
 import type { AttackTargetPriority } from '@/game/combat/AttackTargeting';
 import { safeAreaInsets } from '@/game/render/safeArea';
+import { cssColor } from '@/game/render/cssColor';
+import { drawImageCentered } from '@/game/render/nativeImage';
 
 /** One finger, in canvas coordinates. */
 export interface TouchPoint {
@@ -537,10 +539,159 @@ export class TouchControls {
     if (!this._enabled) return;
 
     this.drawAimTelegraph();
-    this.drawJoystick();
-    this.drawButtons();
-    this.drawItemButtons();
+    this.drawPad();
     this.drawRecallButton();
+  }
+
+  /**
+   * The joystick and both button rows, through the native context.
+   *
+   * These are on screen for every frame of every match on a phone, which is
+   * the machine with the least to spare: as p5 calls (`fill(r, g, b, a)`,
+   * `circle`, `image`, `text`, each normalising its arguments and re-applying
+   * style) the pad measured 5-7ms a frame on a Helio P35 — more than the fog.
+   * The picture is the same one, shape for shape: `imageMode(CENTER)` and the
+   * round line cap are p5's standing state, and the text is p5's default face
+   * at `textAlign(CENTER, CENTER)`.
+   *
+   * One `save`/`restore` around the lot is what the three `push`/`pop` pairs
+   * were for — nothing set here reaches the next p5 draw.
+   */
+  private drawPad(): void {
+    const ctx = drawingContext;
+    ctx.save();
+
+    const home = this.layout.joystickHome;
+    const active = this.joystick.active;
+    const base = active ? this.joystick.base : home;
+    const radius = active ? this.joystick.radius : home.radius;
+    const knob = active ? this.joystick.knob : base;
+    disc(ctx, base.x, base.y, radius);
+    ctx.strokeStyle = cssColor(230, 230, 230, active ? 140 : 70);
+    ctx.lineWidth = 3;
+    ctx.stroke();
+    disc(ctx, base.x, base.y, radius - 4);
+    ctx.fillStyle = cssColor(255, 255, 255, active ? 60 : 26);
+    ctx.fill();
+    disc(ctx, knob.x, knob.y, this.layout.knobRadius);
+    ctx.fillStyle = cssColor(240, 240, 240, active ? 220 : 130);
+    ctx.fill();
+
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    for (const button of this.layout.buttons) {
+      const view = this.host.spellView(button.slot);
+      if (view) this.paintButton(ctx, button, view, this.gestureFor(button.slot), false);
+    }
+    for (const button of this.layout.items) {
+      const view = this.host.spellView(button.slot, 'item');
+      if (view) this.paintButton(ctx, button, view, this.gestureFor(button.slot, 'item'), true);
+    }
+    ctx.restore();
+  }
+
+  /**
+   * One button of either row. An item button is a spell button without the
+   * mana badge and the charge colour, in a gold rim one weight lighter.
+   */
+  private paintButton(
+    ctx: CanvasRenderingContext2D,
+    button: { x: number; y: number; radius: number; primary?: boolean },
+    view: TouchSpellView,
+    gesture: ReturnType<TouchControls['gestureFor']>,
+    item: boolean
+  ): void {
+    const cancelling = gesture?.phase === 'CANCEL';
+    const visual = describeButtonVisual(view);
+    const { x, y, radius } = button;
+
+    disc(ctx, x, y, radius);
+    ctx.fillStyle = cssColor(12, 16, 24, 200);
+    ctx.fill();
+
+    if (view.icon) {
+      // 1.36 rather than something larger because the icon is square and the
+      // button is round: a square of side s only fits a circle of diameter d
+      // while s <= d/sqrt(2), and anything above that hangs its corners out
+      // past the ring.
+      const size = radius * 1.36;
+      drawImageCentered(ctx, view.icon, x, y, size, size);
+    } else {
+      ctx.fillStyle = cssColor(230, 230, 230, visual.dim ? 120 : 230);
+      ctx.font = padFont(radius * 0.8);
+      ctx.fillText(String(view.label), x, y);
+    }
+
+    if (visual.dim) {
+      disc(ctx, x, y, radius);
+      ctx.fillStyle = cssColor(8, 12, 20, 130);
+      ctx.fill();
+    }
+
+    // The cooldown wedge: a cap sweeping round what is left to run. Dark and
+    // near-opaque for a real lockout; a translucent warm sweep for the basic
+    // attack's swing rhythm, which never stops the player from swinging.
+    if (view.cooldownRatio > 0) {
+      const [r, g, b, a] = visual.wedgeColor;
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.arc(x, y, radius, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * view.cooldownRatio);
+      ctx.closePath();
+      ctx.fillStyle = cssColor(r, g, b, a);
+      ctx.fill();
+    }
+
+    // Seconds left: only for a real lockout. The swing rhythm has no number
+    // for the same reason the desktop HUD never stamps one on it — it would
+    // be counting down for the whole game.
+    if (visual.showSeconds) {
+      ctx.fillStyle = cssColor(240, 240, 240, 235);
+      ctx.font = padFont(radius * 0.62);
+      ctx.fillText(String(view.remainingSeconds), x, y);
+    }
+
+    // The mana badge, bottom-left, where the seconds stamp (centre) and the
+    // cancel cross (also centre) never reach. Blue normally, red when the pool
+    // cannot afford it, same convention as the corner HUD's `.mana-cost` /
+    // `.mana-cost.short`.
+    if (!item && visual.manaBadge) {
+      const badgeX = x - radius * 0.62;
+      const badgeY = y + radius * 0.62;
+      const badgeR = Math.max(9, radius * 0.34);
+      const [r, g, b, a] = visual.manaBadge.color;
+      disc(ctx, badgeX, badgeY, badgeR);
+      ctx.fillStyle = cssColor(r, g, b, a);
+      ctx.fill();
+      ctx.fillStyle = cssColor(200, 226, 255, 255);
+      ctx.font = padFont(badgeR * 0.95);
+      ctx.fillText(String(view.manaCost), badgeX, badgeY);
+    }
+
+    if (cancelling) ctx.strokeStyle = cssColor(235, 70, 70, 240);
+    else if (!item && view.charging) ctx.strokeStyle = cssColor(255, 208, 120, 240);
+    else if (gesture) ctx.strokeStyle = cssColor(120, 220, 255, 240);
+    // Running right now — the same green the desktop tile lights, so "this is
+    // on" reads identically wherever it is drawn.
+    else if (view.sustaining) ctx.strokeStyle = cssColor(75, 208, 134, 240);
+    // Gold at rest, which is what tells the item row apart from the abilities
+    // beside it at a glance: these came out of the shop.
+    else if (item) ctx.strokeStyle = cssColor(200, 170, 110, visual.dim ? 90 : 170);
+    else ctx.strokeStyle = cssColor(210, 210, 210, visual.dim ? 90 : 160);
+    ctx.lineWidth = !item && button.primary ? 5 : 3;
+    disc(ctx, x, y, radius);
+    ctx.stroke();
+
+    if (cancelling) {
+      const arm = radius * 0.45;
+      ctx.strokeStyle = cssColor(235, 70, 70, 245);
+      ctx.lineWidth = item ? 4 : 5;
+      ctx.beginPath();
+      ctx.moveTo(x - arm, y - arm);
+      ctx.lineTo(x + arm, y + arm);
+      ctx.moveTo(x + arm, y - arm);
+      ctx.lineTo(x - arm, y + arm);
+      ctx.stroke();
+    }
   }
 
   /**
@@ -709,225 +860,17 @@ export class TouchControls {
       pop();
     });
   }
+}
 
-  private drawJoystick(): void {
-    const home = this.layout.joystickHome;
-    const base = this.joystick.active ? this.joystick.base : home;
-    const radius = this.joystick.active ? this.joystick.radius : home.radius;
-    const knob = this.joystick.active ? this.joystick.knob : base;
+/** A full circle as the current path — what p5's `circle(x, y, 2 * radius)` traced. */
+function disc(ctx: CanvasRenderingContext2D, x: number, y: number, radius: number): void {
+  ctx.beginPath();
+  ctx.arc(x, y, Math.max(0, radius), 0, Math.PI * 2);
+}
 
-    push();
-    noFill();
-    stroke(230, 230, 230, this.joystick.active ? 140 : 70);
-    strokeWeight(3);
-    circle(base.x, base.y, radius * 2);
-
-    noStroke();
-    fill(255, 255, 255, this.joystick.active ? 60 : 26);
-    circle(base.x, base.y, radius * 2 - 8);
-
-    fill(240, 240, 240, this.joystick.active ? 220 : 130);
-    circle(knob.x, knob.y, this.layout.knobRadius * 2);
-    pop();
-  }
-
-  /**
-   * The item grid, drawn with the same three states as an ability — see
-   * `describeButtonVisual`. Only the slots that hold an item with an active
-   * are drawn; the empty positions stay invisible rather than being rendered
-   * as dead circles, which would read as six abilities the player does not
-   * have.
-   */
-  private drawItemButtons(): void {
-    push();
-    noTint();
-    textAlign(CENTER, CENTER);
-
-    for (const button of this.layout.items) {
-      const view = this.host.spellView(button.slot, 'item');
-      if (!view) continue;
-      const gesture = this.gestureFor(button.slot, 'item');
-      const cancelling = gesture?.phase === 'CANCEL';
-      const visual = describeButtonVisual(view);
-      const diameter = button.radius * 2;
-
-      noStroke();
-      fill(12, 16, 24, 200);
-      circle(button.x, button.y, diameter);
-
-      if (view.icon) {
-        image(
-          view.icon as p5.Image,
-          button.x,
-          button.y,
-          button.radius * 1.36,
-          button.radius * 1.36
-        );
-      } else {
-        fill(230, 230, 230, visual.dim ? 120 : 230);
-        textSize(button.radius * 0.8);
-        text(view.label, button.x, button.y);
-      }
-
-      if (visual.dim) {
-        noStroke();
-        fill(8, 12, 20, 130);
-        circle(button.x, button.y, diameter);
-      }
-
-      if (view.cooldownRatio > 0) {
-        noStroke();
-        fill(...visual.wedgeColor);
-        arc(
-          button.x,
-          button.y,
-          diameter,
-          diameter,
-          -HALF_PI,
-          -HALF_PI + TWO_PI * view.cooldownRatio,
-          PIE
-        );
-      }
-
-      if (visual.showSeconds) {
-        noStroke();
-        fill(240, 240, 240, 235);
-        textSize(button.radius * 0.62);
-        text(String(view.remainingSeconds), button.x, button.y);
-      }
-
-      noFill();
-      strokeWeight(3);
-      if (cancelling) stroke(235, 70, 70, 240);
-      else if (gesture) stroke(120, 220, 255, 240);
-      // Running right now — the same green the desktop tile and the ability
-      // buttons use, so "this is on" reads identically wherever it is drawn.
-      else if (view.sustaining) stroke(75, 208, 134, 240);
-      // Gold at rest, which is what tells this row apart from the abilities
-      // beside it at a glance: these came out of the shop.
-      else stroke(200, 170, 110, visual.dim ? 90 : 170);
-      circle(button.x, button.y, diameter);
-
-      if (cancelling) {
-        stroke(235, 70, 70, 245);
-        strokeWeight(4);
-        const arm = button.radius * 0.45;
-        line(button.x - arm, button.y - arm, button.x + arm, button.y + arm);
-        line(button.x + arm, button.y - arm, button.x - arm, button.y + arm);
-      }
-    }
-    pop();
-  }
-
-  private drawButtons(): void {
-    push();
-    // Never tint. p5's tint() does not set a canvas property — it re-runs the
-    // whole image through a per-pixel loop on a scratch canvas on *every*
-    // image() call, uncached. Seven icons a frame made it the single most
-    // expensive thing this layer did, by a wide margin. A greyed-out button is
-    // drawn as the icon plus a dark disc over it instead, which is one fill.
-    noTint();
-    textAlign(CENTER, CENTER);
-
-    for (const button of this.layout.buttons) {
-      const view = this.host.spellView(button.slot);
-      if (!view) continue;
-      const gesture = this.gestureFor(button.slot);
-      const cancelling = gesture?.phase === 'CANCEL';
-      const visual = describeButtonVisual(view);
-      const diameter = button.radius * 2;
-
-      noStroke();
-      fill(12, 16, 24, 200);
-      circle(button.x, button.y, diameter);
-
-      if (view.icon) {
-        // imageMode(CENTER) is set once in GameScene.enter and never changed.
-        // 1.36 rather than something larger because the icon is square and the
-        // button is round: a square of side s only fits a circle of diameter d
-        // while s <= d/sqrt(2), and anything above that hangs its corners out
-        // past the ring.
-        const size = button.radius * 1.36;
-        image(view.icon as p5.Image, button.x, button.y, size, size);
-      } else {
-        fill(230, 230, 230, visual.dim ? 120 : 230);
-        textSize(button.radius * 0.8);
-        text(view.label, button.x, button.y);
-      }
-
-      if (visual.dim) {
-        noStroke();
-        fill(8, 12, 20, 130);
-        circle(button.x, button.y, diameter);
-      }
-
-      // The cooldown wedge: a cap sweeping round what is left to run. Dark and
-      // near-opaque for a real lockout; a translucent warm sweep for the basic
-      // attack's swing rhythm, which never stops the player from swinging.
-      if (view.cooldownRatio > 0) {
-        noStroke();
-        fill(...visual.wedgeColor);
-        arc(
-          button.x,
-          button.y,
-          diameter,
-          diameter,
-          -HALF_PI,
-          -HALF_PI + TWO_PI * view.cooldownRatio,
-          PIE
-        );
-      }
-
-      // Seconds left: only for a real lockout. The swing rhythm has no number
-      // for the same reason the desktop HUD never stamps one on it — it would
-      // be counting down for the whole game.
-      if (visual.showSeconds) {
-        noStroke();
-        fill(240, 240, 240, 235);
-        textSize(button.radius * 0.62);
-        text(String(view.remainingSeconds), button.x, button.y);
-      }
-
-      // Mana badge, bottom-left of the ring — the one corner the seconds
-      // stamp (centre) and the cancel cross (also centre) never reach. Blue
-      // normally, red when the pool cannot afford it, same convention as the
-      // corner HUD's `.mana-cost` / `.mana-cost.short`.
-      if (visual.manaBadge) {
-        const badgeX = button.x - button.radius * 0.62;
-        const badgeY = button.y + button.radius * 0.62;
-        const badgeR = Math.max(9, button.radius * 0.34);
-        noStroke();
-        fill(...visual.manaBadge.color);
-        circle(badgeX, badgeY, badgeR * 2);
-        fill(200, 226, 255, 255);
-        textSize(badgeR * 0.95);
-        text(String(view.manaCost), badgeX, badgeY);
-      }
-
-      noFill();
-      strokeWeight(button.primary ? 5 : 3);
-      if (cancelling) stroke(235, 70, 70, 240);
-      else if (view.charging) stroke(255, 208, 120, 240);
-      else if (gesture) stroke(120, 220, 255, 240);
-      // Running right now — the same green the desktop bar lights a toggle's
-      // tile with. Below the three gesture colours because those describe what
-      // the thumb is doing this instant, which always wins over a standing
-      // state; above the resting ring because "this is on" is the only thing
-      // here a player can otherwise not see at all.
-      else if (view.sustaining) stroke(75, 208, 134, 240);
-      else stroke(210, 210, 210, visual.dim ? 90 : 160);
-      circle(button.x, button.y, diameter);
-
-      if (cancelling) {
-        stroke(235, 70, 70, 245);
-        strokeWeight(5);
-        const arm = button.radius * 0.45;
-        line(button.x - arm, button.y - arm, button.x + arm, button.y + arm);
-        line(button.x + arm, button.y - arm, button.x - arm, button.y + arm);
-      }
-    }
-    pop();
-  }
+/** p5's default text face at a `textSize` — what `text()` set before every label. */
+function padFont(size: number): string {
+  return `normal ${size}px sans-serif`;
 }
 
 export default TouchControls;

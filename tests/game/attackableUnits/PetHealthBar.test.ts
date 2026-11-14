@@ -55,6 +55,9 @@ function pet(game: ReturnType<typeof makeGame>, ownerUnit: Champion): Pet {
 beforeEach(() => {
   spies = stubGameGlobals();
 });
+
+/** The compact frame's rectangles: it paints through the native context. */
+const barRects = () => vi.mocked(drawingContext.fillRect);
 afterEach(() => vi.unstubAllGlobals());
 
 describe('a pet gets the compact health frame', () => {
@@ -66,7 +69,7 @@ describe('a pet gets the compact health frame', () => {
 
     summon.drawHealthBar();
 
-    const widths = spies.rect.mock.calls.map(call => call[2]);
+    const widths = barRects().mock.calls.map(call => call[2] as number);
     expect(widths.some(w => Math.abs(w - 125) < 0.01)).toBe(false);
     expect(widths.some(w => w <= 60)).toBe(true);
   });
@@ -89,9 +92,9 @@ describe('a pet gets the compact health frame', () => {
     const summon = pet(game, owner);
     summon.stats.maxMana.baseValue = 0;
 
-    const before = spies.rect.mock.calls.length;
+    const before = barRects().mock.calls.length;
     summon.drawHealthBar();
-    const drawn = spies.rect.mock.calls.slice(before);
+    const drawn = barRects().mock.calls.slice(before);
 
     // backing + health only; a mana strip would be a third rect at a smaller
     // height sitting below the health one
@@ -106,8 +109,8 @@ describe('a pet gets the compact health frame', () => {
     game.setPlayer(owner);
 
     owner.drawHealthBar();
-    // The full champion frame paints through the native context; the compact
-    // pet frame stays on p5 — so each side reads its own spy.
+    // Both frames paint through the native context, so the spy is cleared
+    // between the two draws.
     const ctxRect = vi.mocked(drawingContext.fillRect);
     const ctxText = vi.mocked(drawingContext.fillText);
     const championWidest = Math.max(...ctxRect.mock.calls.map(call => call[2] as number));
@@ -115,10 +118,9 @@ describe('a pet gets the compact health frame', () => {
 
     ctxRect.mockClear();
     ctxText.mockClear();
-    spies.rect.mockClear();
     spies.text.mockClear();
     pet(game, owner).drawHealthBar();
-    const petWidest = Math.max(...spies.rect.mock.calls.map(call => call[2]));
+    const petWidest = Math.max(...ctxRect.mock.calls.map(call => call[2] as number));
 
     // the champion keeps its wide frame and its score; the pet gets neither
     expect(championWidest).toBeGreaterThan(petWidest * 1.8);
@@ -151,8 +153,8 @@ describe('a decoy wears the champion frame instead', () => {
 
     decoy.drawHealthBar();
 
-    // The champion frame paints through the native context; the summon badge
-    // never leaves p5, so reading the two spies separates them cleanly.
+    // Both frames paint through the native context now, so what tells them
+    // apart is what the full one alone has: its width and its score.
     const widest = Math.max(...ctxRect.mock.calls.map(call => call[2] as number));
     expect(widest).toBeGreaterThan(120);
     expect(ctxText).toHaveBeenCalled();
@@ -168,10 +170,10 @@ describe('a decoy wears the champion frame instead', () => {
     decoy.disguisedAsChampion = true;
 
     ordinary.drawHealthBar(true);
-    const summonBar = Math.max(...spies.rect.mock.calls.map(call => call[2]));
-    spies.rect.mockClear();
+    const summonBar = Math.max(...barRects().mock.calls.map(call => call[2] as number));
+    barRects().mockClear();
     decoy.drawHealthBar(true);
-    const decoyBar = Math.max(...spies.rect.mock.calls.map(call => call[2]));
+    const decoyBar = Math.max(...barRects().mock.calls.map(call => call[2] as number));
 
     // At mobile zoom every unit wears the compact frame, and a summon's is
     // deliberately narrower than a champion's. A decoy asks for the champion's

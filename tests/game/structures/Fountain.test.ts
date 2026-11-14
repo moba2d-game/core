@@ -87,6 +87,29 @@ describe('Fountain', () => {
       return game;
     };
 
+    // On a phone's GPU canvas a frame costs by the draw operation. Forty
+    // dashes as forty `arc()` strokes made this ring a tenth of every draw
+    // call in a ten-champion fight (Helio P35, 43 of ~420); the dashes are
+    // forty subpaths of one stroke now.
+    it('strokes all its dashes in one draw operation', () => {
+      const spies = stubGameGlobals();
+      const fountain = fountainAt(150, 600, gameWithPlayerAt(0));
+      const ctx = drawingContext;
+      const strokesBefore = vi.mocked(ctx.stroke).mock.calls.length;
+
+      (fountain as unknown as { drawShopReach(): void }).drawShopReach();
+
+      expect(vi.mocked(ctx.stroke).mock.calls.length - strokesBefore).toBe(1);
+      expect(spies.arc, 'p5 arc() strokes each dash on its own').not.toHaveBeenCalled();
+      const dashes = vi.mocked(ctx.arc).mock.calls;
+      expect(dashes).toHaveLength(40);
+      expect(vi.mocked(ctx.moveTo).mock.calls).toHaveLength(40);
+      // Every dash is on the reach itself, and covers just over half its step.
+      expect(dashes.every(call => call[2] === 600)).toBe(true);
+      const step = (Math.PI * 2) / 40;
+      expect((dashes[7][4] as number) - (dashes[7][3] as number)).toBeCloseTo(step * 0.55, 9);
+    });
+
     it('is not drawn at all on a map that never widened the reach', () => {
       // The platform's own edge already is this circle. A second one drawn on
       // top of it is a new line that says nothing — and every ordinary map is
