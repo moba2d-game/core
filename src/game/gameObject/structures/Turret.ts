@@ -21,7 +21,11 @@ import Minion, {
 import Monster from '@/game/gameObject/attackableUnits/Monster';
 import Pet from '@/game/gameObject/attackableUnits/Pet';
 import TrailSystem from '@/game/gameObject/helpers/TrailSystem';
-import { OBJECTIVE_Z_INDEX, PredefinedFilters } from '@/game/managers/ObjectManager';
+import {
+  OBJECTIVE_Z_INDEX,
+  PredefinedFilters,
+  type GameObjectFilter,
+} from '@/game/managers/ObjectManager';
 import { canSee } from '@/game/combat/Vision';
 import { pickAggroTarget, type AggroChoice, type AggroLadder } from '@/game/combat/AggroPriority';
 import { DEFAULT_TURRET_PRESET } from '@/game/config/tuningDefaults';
@@ -178,6 +182,36 @@ export default class Turret extends AttackableUnit {
   _attackCooldown = 0;
   /** Time left until the next full target scan — see `update`. */
   _scanCooldown = 0;
+  /**
+   * What `findTarget` asks the object tree with, built once per turret.
+   *
+   * A turret holding no target rescans every tick (see `update`: losing a
+   * target must not wait out the cadence), which is the state a tower is in for
+   * most of a match — and every one of those scans built a `Circle`, its
+   * `bounds`, a filter array, a type list and three closures to ask the same
+   * question as the tick before.
+   *
+   * `_scanFilters` is one predicate saying exactly what the four it replaces
+   * said, in their order: `includeTypes([Champion, Minion, Monster])`,
+   * `canTakeDamageFromTeam(this.teamId)`, `visibleTo(this)`,
+   * `excludeStealthed`. All three types are `AttackableUnit`s, so the
+   * `instanceof AttackableUnit` guards the last three opened with are already
+   * answered by the first. `teamId` is read when the predicate runs, which is
+   * inside the query that used to capture it one line earlier.
+   * `stillValidTarget` below is the same list against one held unit; the three
+   * stay in step by hand. `tests/game/structures/TurretScan.test.ts` runs this
+   * against the `PredefinedFilters` chain it replaced.
+   */
+  private readonly _scanArea = new Circle({ x: 0, y: 0, r: 0 });
+  private readonly _scanFilters: GameObjectFilter[] = [
+    object =>
+      (object instanceof Champion || object instanceof Minion || object instanceof Monster) &&
+      object.targetable &&
+      !object.isDead &&
+      object.teamId !== this.teamId &&
+      canSee(this, object) &&
+      !object.isStealthed,
+  ];
   /** ms since the last hit taken — gates self-repair. */
   _sinceDamaged = Infinity;
   /** ms left on the muzzle flash. */
@@ -386,18 +420,25 @@ export default class Turret extends AttackableUnit {
     current: AttackableUnit | null = null,
     currentRank = Infinity
   ): AggroChoice<AttackableUnit> | null {
+    // The scan's circle and its predicate are this turret's own, kept between
+    // scans — see `_scanFilters`. The circle is re-aimed every time rather
+    // than trusted: the anchor does not move, but `attackRange` is a plain
+    // field a map or a passive may widen.
+    const area = this._scanArea;
+    const r = this.attackRange;
+    const x = this.position.x;
+    const y = this.position.y;
+    area.x = x;
+    area.y = y;
+    area.r = r;
+    const bounds = area.bounds;
+    bounds.minX = x - r;
+    bounds.minY = y - r;
+    bounds.maxX = x + r;
+    bounds.maxY = y + r;
     const candidates = this.game.objectManager.queryObjects({
-      area: new Circle({
-        x: this.position.x,
-        y: this.position.y,
-        r: this.attackRange,
-      }),
-      filters: [
-        PredefinedFilters.includeTypes([Champion, Minion, Monster]),
-        PredefinedFilters.canTakeDamageFromTeam(this.teamId),
-        PredefinedFilters.visibleTo(this),
-        PredefinedFilters.excludeStealthed,
-      ],
+      area,
+      filters: this._scanFilters,
     }) as AttackableUnit[];
 
     // Nothing to shoot means nothing to defend either, and this is the state a

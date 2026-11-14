@@ -272,6 +272,26 @@ export class Quadtree {
   level: number;
   objects: any[];
   nodes: Quadtree[];
+  /**
+   * The four children this node had before the last `clear()`, kept for the
+   * next `split()`.
+   *
+   * `ObjectManager` clears and refills two trees every tick. `clear()` used to
+   * drop every child and `split()` build four new ones — a `Quadtree`, its
+   * `bounds`, its two arrays and the options literal each — and every leaf got
+   * a fresh empty `nodes` array on top, so a tick threw away the whole tree's
+   * skeleton to rebuild the same one. A unit moves a few pixels a tick; the
+   * nodes that split this tick are nearly always the ones that split last tick.
+   *
+   * What a query can see is unchanged: a parked subtree is unreachable
+   * (`nodes` is empty), holds no objects (`clear()` recursed into it first),
+   * and comes back through `split()` with the same bounds, level and limits a
+   * new child would be given. `tests/libs/quadtree.test.ts` runs a reused tree
+   * against a freshly built one over shifting boards.
+   */
+  private _spare: Quadtree[] | null = null;
+  /** The empty `nodes` of an unsplit node. One per node, never written to: `split` swaps arrays instead. */
+  private _noNodes: Quadtree[];
 
   constructor(
     { x = 0, y = 0, w, h, maxObjects = 10, maxLevels = 4 }: QuadtreeConfig = { w: 0, h: 0 },
@@ -282,7 +302,8 @@ export class Quadtree {
     this.maxLevels = typeof maxLevels === 'number' ? maxLevels : 4;
     this.level = level;
     this.objects = [];
-    this.nodes = [];
+    this._noNodes = [];
+    this.nodes = this._noNodes;
   }
 
   getIndex(areaObj: { qtIndex: (bounds: any) => number }): number {
@@ -299,10 +320,49 @@ export class Quadtree {
     // than built as a throwaway `coords` array.
     const maxObjects = this.maxObjects;
     const maxLevels = this.maxLevels;
-    this.nodes[0] = new Quadtree({ x: x + w, y, w, h, maxObjects, maxLevels }, level);
-    this.nodes[1] = new Quadtree({ x, y, w, h, maxObjects, maxLevels }, level);
-    this.nodes[2] = new Quadtree({ x, y: y + h, w, h, maxObjects, maxLevels }, level);
-    this.nodes[3] = new Quadtree({ x: x + w, y: y + h, w, h, maxObjects, maxLevels }, level);
+    const spare = this._spare;
+    if (spare) {
+      // The four children `clear()` parked, put back to work — see `_spare`.
+      // Each is re-seated from this node's *current* numbers rather than
+      // trusted to still hold them, so a caller that moved `bounds` or changed
+      // `maxObjects` between rebuilds gets exactly the children `new` would
+      // have built.
+      this._spare = null;
+      spare[0]._reseat(x + w, y, w, h, maxObjects, maxLevels, level);
+      spare[1]._reseat(x, y, w, h, maxObjects, maxLevels, level);
+      spare[2]._reseat(x, y + h, w, h, maxObjects, maxLevels, level);
+      spare[3]._reseat(x + w, y + h, w, h, maxObjects, maxLevels, level);
+      this.nodes = spare;
+      return;
+    }
+    // A new array, never a write into the current one: that is `_noNodes`,
+    // which has to stay empty for `clear()` to hand back.
+    this.nodes = [
+      new Quadtree({ x: x + w, y, w, h, maxObjects, maxLevels }, level),
+      new Quadtree({ x, y, w, h, maxObjects, maxLevels }, level),
+      new Quadtree({ x, y: y + h, w, h, maxObjects, maxLevels }, level),
+      new Quadtree({ x: x + w, y: y + h, w, h, maxObjects, maxLevels }, level),
+    ];
+  }
+
+  /** `split`'s half of the reuse: make a parked (already cleared) child the node `new` would build. */
+  private _reseat(
+    x: number,
+    y: number,
+    w: number,
+    h: number,
+    maxObjects: number,
+    maxLevels: number,
+    level: number
+  ): void {
+    const bounds = this.bounds;
+    bounds.x = x;
+    bounds.y = y;
+    bounds.w = w;
+    bounds.h = h;
+    this.maxObjects = maxObjects;
+    this.maxLevels = maxLevels;
+    this.level = level;
   }
 
   insert(areaObj: { qtIndex: (bounds: any) => number }): void {
@@ -399,11 +459,13 @@ export class Quadtree {
 
   clear(): void {
     this.objects.length = 0;
-    for (let i = 0; i < this.nodes.length; i++) {
-      if (this.nodes.length) {
-        this.nodes[i].clear();
-      }
-    }
-    this.nodes = [];
+    const nodes = this.nodes;
+    if (nodes.length === 0) return;
+    for (let i = 0; i < nodes.length; i++) nodes[i].clear();
+    // Parked, not dropped — see `_spare`. `nodes` goes back to an empty array
+    // because "has this node split?" is `nodes.length` everywhere, here and in
+    // `debug/DebugOverlay`.
+    this._spare = nodes.length === QUADRANT_COUNT ? nodes : null;
+    this.nodes = this._noNodes;
   }
 }

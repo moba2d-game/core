@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { Quadtree, Rectangle } from '../../src/libs/quadtree';
+import { Circle, Quadtree, Rectangle } from '../../src/libs/quadtree';
 
 // Quadtree.retrieve used to dedupe with
 // `returnObjects.filter((item, i) => returnObjects.indexOf(item) >= i)`,
@@ -94,5 +94,108 @@ describe('Quadtree.retrieve', () => {
 
     expect(first).toEqual(['a', 'b']);
     expect(second).toEqual(first);
+  });
+});
+
+// `ObjectManager` clears and refills its trees every tick. `clear()` parks a
+// node's children and `split()` takes them back instead of building four new
+// ones — which is only allowed to be invisible: same hits, same order, same
+// node layout as a tree built from nothing.
+describe('Quadtree.clear reuses its nodes', () => {
+  const CONFIG = { x: 0, y: 0, w: 3200, h: 3200, maxObjects: 4, maxLevels: 4 };
+
+  /** Deterministic, so a failure names a round that can be re-run. */
+  const rng = (seed: number) => () => {
+    seed = (seed * 1664525 + 1013904223) >>> 0;
+    return seed / 0x100000000;
+  };
+
+  const layout = (node: Quadtree, out: string[] = []): string[] => {
+    const { x, y, w, h } = node.bounds;
+    out.push(`${node.level}:${x},${y},${w},${h}:${node.objects.map(o => o.data).join('.')}`);
+    for (const child of node.nodes) layout(child, out);
+    return out;
+  };
+
+  const fill = (tree: Quadtree, board: { x: number; y: number; s: number; id: number }[]) => {
+    for (const b of board) {
+      tree.insert(new Rectangle({ x: b.x - b.s / 2, y: b.y - b.s / 2, w: b.s, h: b.s, data: b.id }));
+    }
+  };
+
+  it('answers every query like a freshly built tree, in the same order', () => {
+    const random = rng(7);
+    const reused = new Quadtree(CONFIG);
+    for (let round = 0; round < 120; round++) {
+      // The board swings between crowded-in-one-corner and nearly empty, so
+      // nodes split, stop splitting and split again somewhere else.
+      const count = round % 9 === 0 ? 2 : 10 + Math.floor(random() * 70);
+      const spread = round % 4 === 0 ? 300 : 3200;
+      const ox = random() * (3200 - spread);
+      const oy = random() * (3200 - spread);
+      const board = Array.from({ length: count }, (_, id) => ({
+        x: ox + random() * spread,
+        y: oy + random() * spread,
+        s: 20 + random() * 160,
+        id,
+      }));
+
+      reused.clear();
+      fill(reused, board);
+      const fresh = new Quadtree(CONFIG);
+      fill(fresh, board);
+
+      expect(layout(reused), `layout, round ${round}`).toEqual(layout(fresh));
+      for (let q = 0; q < 12; q++) {
+        const x = random() * 3200;
+        const y = random() * 3200;
+        const area =
+          q % 2 === 0
+            ? new Circle({ x, y, r: 50 + random() * 900 })
+            : new Rectangle({ x, y, w: 50 + random() * 900, h: 50 + random() * 900 });
+        expect(
+          reused.retrieve(area).map(r => r.data),
+          `round ${round}, query ${q}`
+        ).toEqual(fresh.retrieve(area).map(r => r.data));
+      }
+    }
+  });
+
+  it('hands a split node the children it had before the clear', () => {
+    const tree = new Quadtree({ x: 0, y: 0, w: 100, h: 100, maxObjects: 1, maxLevels: 2 });
+    const crowd = () => {
+      tree.insert(new Rectangle({ x: 1, y: 1, w: 1, h: 1, data: 'a' }));
+      tree.insert(new Rectangle({ x: 80, y: 80, w: 1, h: 1, data: 'b' }));
+    };
+    crowd();
+    const before = [...tree.nodes];
+    expect(before).toHaveLength(4);
+
+    tree.clear();
+    // Unsplit is still "no nodes": the debug overlay and `insert` both read it.
+    expect(tree.nodes).toHaveLength(0);
+    expect(tree.objects).toHaveLength(0);
+
+    crowd();
+    expect(tree.nodes).toHaveLength(4);
+    tree.nodes.forEach((node, i) => expect(node).toBe(before[i]));
+  });
+
+  it('re-seats reused children from the bounds the parent has now', () => {
+    const tree = new Quadtree({ x: 0, y: 0, w: 100, h: 100, maxObjects: 1, maxLevels: 2 });
+    tree.insert(new Rectangle({ x: 1, y: 1, w: 1, h: 1 }));
+    tree.insert(new Rectangle({ x: 80, y: 80, w: 1, h: 1 }));
+    tree.clear();
+
+    tree.bounds = { x: 1000, y: 2000, w: 400, h: 200 };
+    tree.insert(new Rectangle({ x: 1001, y: 2001, w: 1, h: 1 }));
+    tree.insert(new Rectangle({ x: 1390, y: 2190, w: 1, h: 1 }));
+
+    expect(tree.nodes.map(n => n.bounds)).toEqual([
+      { x: 1200, y: 2000, w: 200, h: 100 },
+      { x: 1000, y: 2000, w: 200, h: 100 },
+      { x: 1000, y: 2100, w: 200, h: 100 },
+      { x: 1200, y: 2100, w: 200, h: 100 },
+    ]);
   });
 });
