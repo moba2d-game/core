@@ -269,7 +269,9 @@ describe('ARAM, the reference pack’s own map', () => {
   it('draws one neutral point core answers and one only a pack can', async () => {
     const { slots } = await geometry();
     const roles = slots.neutral.map(slot => slot.role).sort();
-    expect(roles).toEqual(['dragon', 'relic']);
+    // `scenery` is the pack's own painted ground, added by `aramGeometry.ts`
+    // rather than drawn in the editor — see `referenceScenery.test.ts`.
+    expect(roles).toEqual(['dragon', 'relic', 'scenery']);
 
     const relic = slots.neutral.find(slot => slot.role === 'relic')!;
     expect(coreSlotObjectFor(relic.role), 'core stopped answering the relic').toBeTypeOf(

@@ -1,5 +1,6 @@
 import type { MapGeometry } from '@moba2d/core/content/ContentPack';
 import mapJsonRaw from './maps/aram.json?raw';
+import { withScenerySlot } from './art/scenery';
 
 /**
  * ARAM's heavy half — terrain, slots and its one lane, read straight out of the
@@ -37,10 +38,38 @@ import mapJsonRaw from './maps/aram.json?raw';
  * having one copy: ~6KB of a lazily-fetched chunk, against a second transcript
  * of the map that a test would have to keep honest for ever.
  */
-const source = JSON.parse(mapJsonRaw) as MapGeometry & { authoring?: unknown };
+const source = JSON.parse(mapJsonRaw) as MapGeometry & { size: number; authoring?: unknown };
 
-export const aramGeometry: MapGeometry = {
-  terrain: source.terrain,
-  slots: source.slots,
-  lanes: source.lanes,
-};
+/**
+ * What the painted ground needs to know about *this* map's proportions — the
+ * painter's defaults are for a three-lane map half as large again.
+ *
+ * The corridor is the lane here, wall to wall, so the dirt is wide enough to
+ * reach both tree lines; the bases sit in corners some 600 across, so a plaza
+ * the default size would run under the forest on three sides. The two rocks
+ * beside the lane (10,098 each) are boulders; the two blocks by the middle
+ * (19,492 each) are small stands of trees.
+ */
+export const ARAM_ART_SCALE = {
+  laneWidth: 230,
+  plazaRadius: 330,
+  padRadius: 78,
+  boulderArea: 15_000,
+} as const;
+
+/**
+ * The scenery slot is added here, to the shipped geometry, and **not** drawn
+ * into `maps/aram.json`: it is how this pack hangs its ground art on the map,
+ * not a point anybody placed, and an editor re-export must not be able to
+ * lose it. See `art/scenery.ts`.
+ */
+export const aramGeometry: MapGeometry = withScenerySlot(
+  'aram',
+  source.size,
+  {
+    terrain: source.terrain,
+    slots: source.slots,
+    lanes: source.lanes,
+  },
+  ARAM_ART_SCALE
+);

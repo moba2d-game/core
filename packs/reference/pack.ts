@@ -5,6 +5,7 @@ import type {
   MonsterDef,
 } from '@moba2d/core/content/ContentPack';
 import { referenceMap } from './map';
+import makeScenery, { SCENERY_ROLE } from './art/scenery';
 import makeVeraQ, { VERA_Q_COOLDOWN_MS, VERA_Q_DAMAGE, VERA_Q_MANA } from './spells/Vera_Q';
 import makeVeraW, {
   VERA_W_COOLDOWN_MS,
@@ -140,6 +141,11 @@ const code = (api: ContentApi): ContentPackCode => ({
     Vera_W: makeVeraW(api),
     Vera_E: makeVeraE(api),
     Vera_R: makeVeraR(api),
+  },
+  // The painted ground of this pack's map: the map's geometry carries one
+  // neutral `kind: 'object'` slot with this role, and this is what stands on it.
+  slotObjects: {
+    [SCENERY_ROLE]: makeScenery(api),
   },
 });
 

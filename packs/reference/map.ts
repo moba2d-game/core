@@ -50,5 +50,9 @@ export const referenceMap: MapDefinition = {
   name: 'ARAM',
   size: 4000,
   factions: [{ id: 'amber' }, { id: 'jade' }],
+  // `art/` paints the walls, the brush and the lane from the same polygons the
+  // collision uses; core's grey fills underneath would be a whole extra layer
+  // of overdraw. The object that paints rides in on a slot — `art/scenery.ts`.
+  paintsOwnTerrain: true,
   geometry: () => import('./aramGeometry').then(module => module.aramGeometry),
 };
