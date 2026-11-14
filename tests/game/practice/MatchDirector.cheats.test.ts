@@ -193,6 +193,61 @@ describe('MatchDirector — cheats', () => {
 });
 
 /**
+ * `tick` runs every simulation step, and a phone that is behind runs several
+ * steps per drawn frame. Re-asserting the cheat used to build the bot roster —
+ * a walk of every object in the match — on each of them, in every match,
+ * whether or not anybody had ever opened the cheat tab.
+ */
+describe('MatchDirector.tick when nobody is invulnerable', () => {
+  const rosterWalks = (ctx: { objectManager: { objects: unknown[] } }) => {
+    const objects = ctx.objectManager.objects;
+    let reads = 0;
+    Object.defineProperty(ctx.objectManager, 'objects', {
+      configurable: true,
+      get: () => {
+        reads++;
+        return objects;
+      },
+    });
+    return () => reads;
+  };
+
+  it('does not walk the object list', () => {
+    const { context: ctx } = context();
+    const director = new MatchDirector(ctx);
+    const walks = rosterWalks(ctx as never);
+
+    for (let i = 0; i < 10; i++) director.tick();
+
+    expect(walks()).toBe(0);
+  });
+
+  it('nor after the switch has been turned off again', () => {
+    const { context: ctx, player } = context();
+    const director = new MatchDirector(ctx);
+    director.setInvulnerable(player, true);
+    director.setInvulnerable(player, true);
+    director.setInvulnerable(player, false);
+    const walks = rosterWalks(ctx as never);
+
+    director.tick();
+
+    expect(walks()).toBe(0);
+  });
+
+  it('but does while one is — the roster is how a bot gets its buff back', () => {
+    const { context: ctx, player } = context();
+    const director = new MatchDirector(ctx);
+    director.setInvulnerable(player, true);
+    const walks = rosterWalks(ctx as never);
+
+    director.tick();
+
+    expect(walks()).toBeGreaterThan(0);
+  });
+});
+
+/**
  * The debug hub's state. Plain fields on the director, deliberately: the panel
  * holds the match paused while a tab is open, so `ObjectManager.update()` never
  * runs, and anything a tab reads has to be readable without it.

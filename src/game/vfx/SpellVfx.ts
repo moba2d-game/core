@@ -82,6 +82,10 @@ export default class SpellVfx {
   }
 
   update(deltaMs: number): void {
+    // Almost every spell, almost every tick, has nothing playing — and this is
+    // called once per spell per simulation step. Do not build an iterator to
+    // find that out.
+    if (this.effects.size === 0) return;
     for (const [phase, effect] of this.effects) {
       effect.update(deltaMs);
       if (!effect.complete) continue;
@@ -95,10 +99,16 @@ export default class SpellVfx {
   }
 
   dispose(): void {
-    for (const effect of this.effects.values()) effect.dispose();
-    this.effects.clear();
-    for (const sound of this.loopingSounds.values()) sound.stop();
-    this.loopingSounds.clear();
+    // `Spell.update` calls this every tick for every spell of a dead caster,
+    // so the already-empty case is the common one by a wide margin.
+    if (this.effects.size > 0) {
+      for (const effect of this.effects.values()) effect.dispose();
+      this.effects.clear();
+    }
+    if (this.loopingSounds.size > 0) {
+      for (const sound of this.loopingSounds.values()) sound.stop();
+      this.loopingSounds.clear();
+    }
     this.loopPhase = undefined;
   }
 

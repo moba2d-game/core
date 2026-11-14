@@ -320,7 +320,14 @@ export default class Spell {
     this.onUpdate();
     this.observeInterrupts();
     this.holdStillWhileCasting();
-    this.attributed(() => this.runtime.update(deltaTime));
+    // `attributed`, written out: this runs once per spell per simulation step,
+    // and the bracket is the only thing here that needed a closure to say.
+    const previous = beginAttribution(this);
+    try {
+      this.runtime.update(deltaTime);
+    } finally {
+      endAttribution(previous);
+    }
     if (this.owner.isDead) {
       this.spellVfx?.dispose();
       return;
@@ -839,75 +846,82 @@ export default class Spell {
   }
 
   private get runtime(): SpellRuntime {
-    if (!this.spellRuntime) {
-      const spec = this.castSpec as CastSpec;
-      this.resolvedSpec = spec;
-      this.spellVfx = new SpellVfx(spec.vfx, spec.sfx);
-      const delegate: SpellRuntimeDelegate = {
-        canStart: context => this.canStart(context),
-        commitResource: (context, point) => this.commitResource(context, point),
-        refundResource: (context, reason) => this.refundResource(context, reason),
-        onCastStart: context => {
-          this.spellVfx?.castStart(context);
-          this.onCastStart(context);
-        },
-        onChargeUpdate: (context, elapsedMs, ratio) => {
-          let liveContext = context;
-          if (
-            this.activeCastSpec.activation === 'HOLD_RELEASE' &&
-            this.game?.worldMouse &&
-            this.owner === this.game.player
-          ) {
-            const dx = this.game.worldMouse.x - this.owner.position.x;
-            const dy = this.game.worldMouse.y - this.owner.position.y;
-            const dist = Math.hypot(dx, dy) || 1;
-            liveContext = {
-              ...context,
-              cursorWorld: { x: this.game.worldMouse.x, y: this.game.worldMouse.y },
-              direction: { x: dx / dist, y: dy / dist },
-            };
-          }
-          this.onChargeUpdate(liveContext, elapsedMs, ratio);
-        },
-        onRelease: context => {
-          let liveContext = context;
-          if (
-            this.activeCastSpec.activation === 'HOLD_RELEASE' &&
-            this.game?.worldMouse &&
-            this.owner === this.game.player
-          ) {
-            const dx = this.game.worldMouse.x - this.owner.position.x;
-            const dy = this.game.worldMouse.y - this.owner.position.y;
-            const dist = Math.hypot(dx, dy) || 1;
-            liveContext = {
-              ...context,
-              cursorWorld: { x: this.game.worldMouse.x, y: this.game.worldMouse.y },
-              direction: { x: dx / dist, y: dy / dist },
-            };
-          }
-          this.spellVfx?.release(liveContext);
-          this.onRelease(liveContext);
-          this.onSpellCast(liveContext);
-          this.game.eventManager.emit(EventType.ON_POST_CAST_SPELL, this);
-        },
-        onChannelTick: (context, tickIndex) => this.onChannelTick(context, tickIndex),
-        onActivate: context => {
-          this.spellVfx?.activate(context);
-          this.onActivate(context);
-        },
-        onRecast: context => this.onRecast(context),
-        onCancel: (context, reason) => {
-          this.spellVfx?.cancel(context);
-          this.onCancel(context, reason);
-        },
-        onComplete: context => {
-          this.spellVfx?.complete();
-          this.onComplete(context);
-        },
-        cooldownDurationMs: durationMs => this.reducedCooldown(durationMs),
-      };
-      this.spellRuntime = new SpellRuntime(spec, delegate);
-    }
+    // One line on purpose. `Spell.update` reads this four times per spell per
+    // simulation step, and with the delegate's dozen closures written in its
+    // body the getter showed up as a frame of its own in a phone profile — 2%
+    // of `Game.update`, for returning a field. The build is `createRuntime`,
+    // run once per spell.
+    return this.spellRuntime ?? this.createRuntime();
+  }
+
+  private createRuntime(): SpellRuntime {
+    const spec = this.castSpec as CastSpec;
+    this.resolvedSpec = spec;
+    this.spellVfx = new SpellVfx(spec.vfx, spec.sfx);
+    const delegate: SpellRuntimeDelegate = {
+      canStart: context => this.canStart(context),
+      commitResource: (context, point) => this.commitResource(context, point),
+      refundResource: (context, reason) => this.refundResource(context, reason),
+      onCastStart: context => {
+        this.spellVfx?.castStart(context);
+        this.onCastStart(context);
+      },
+      onChargeUpdate: (context, elapsedMs, ratio) => {
+        let liveContext = context;
+        if (
+          this.activeCastSpec.activation === 'HOLD_RELEASE' &&
+          this.game?.worldMouse &&
+          this.owner === this.game.player
+        ) {
+          const dx = this.game.worldMouse.x - this.owner.position.x;
+          const dy = this.game.worldMouse.y - this.owner.position.y;
+          const dist = Math.hypot(dx, dy) || 1;
+          liveContext = {
+            ...context,
+            cursorWorld: { x: this.game.worldMouse.x, y: this.game.worldMouse.y },
+            direction: { x: dx / dist, y: dy / dist },
+          };
+        }
+        this.onChargeUpdate(liveContext, elapsedMs, ratio);
+      },
+      onRelease: context => {
+        let liveContext = context;
+        if (
+          this.activeCastSpec.activation === 'HOLD_RELEASE' &&
+          this.game?.worldMouse &&
+          this.owner === this.game.player
+        ) {
+          const dx = this.game.worldMouse.x - this.owner.position.x;
+          const dy = this.game.worldMouse.y - this.owner.position.y;
+          const dist = Math.hypot(dx, dy) || 1;
+          liveContext = {
+            ...context,
+            cursorWorld: { x: this.game.worldMouse.x, y: this.game.worldMouse.y },
+            direction: { x: dx / dist, y: dy / dist },
+          };
+        }
+        this.spellVfx?.release(liveContext);
+        this.onRelease(liveContext);
+        this.onSpellCast(liveContext);
+        this.game.eventManager.emit(EventType.ON_POST_CAST_SPELL, this);
+      },
+      onChannelTick: (context, tickIndex) => this.onChannelTick(context, tickIndex),
+      onActivate: context => {
+        this.spellVfx?.activate(context);
+        this.onActivate(context);
+      },
+      onRecast: context => this.onRecast(context),
+      onCancel: (context, reason) => {
+        this.spellVfx?.cancel(context);
+        this.onCancel(context, reason);
+      },
+      onComplete: context => {
+        this.spellVfx?.complete();
+        this.onComplete(context);
+      },
+      cooldownDurationMs: durationMs => this.reducedCooldown(durationMs),
+    };
+    this.spellRuntime = new SpellRuntime(spec, delegate);
     return this.spellRuntime;
   }
 

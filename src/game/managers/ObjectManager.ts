@@ -257,22 +257,34 @@ export const PredefinedFilters = {
     (teamId: string): GameObjectFilter =>
     object =>
       object.teamId !== teamId,
+  // The four list filters below are plain loops rather than `list.some(...)`:
+  // a filter runs once per candidate per query, and `some` built a closure for
+  // each of those runs before calling through the `Array.prototype` patch in
+  // `main.ts`. Same answers, including for an empty list.
   includeTeamIds:
     (teamIds: string[]): GameObjectFilter =>
-    object =>
-      teamIds.some(teamId => object.teamId === teamId),
+    object => {
+      for (let i = 0; i < teamIds.length; i++) if (object.teamId === teamIds[i]) return true;
+      return false;
+    },
   excludeTeamIds:
     (teamIds: string[]): GameObjectFilter =>
-    object =>
-      !teamIds.some(teamId => object.teamId === teamId),
+    object => {
+      for (let i = 0; i < teamIds.length; i++) if (object.teamId === teamIds[i]) return false;
+      return true;
+    },
   includeTypes:
     (types: GameObjectConstructor[]): GameObjectFilter =>
-    object =>
-      types.some(type => object instanceof type),
+    object => {
+      for (let i = 0; i < types.length; i++) if (object instanceof types[i]) return true;
+      return false;
+    },
   excludeTypes:
     (types: GameObjectConstructor[]): GameObjectFilter =>
-    object =>
-      !types.some(type => object instanceof type),
+    object => {
+      for (let i = 0; i < types.length; i++) if (object instanceof types[i]) return false;
+      return true;
+    },
   excludeObjects:
     (
       objects: (GameObject | undefined | null)[] | Set<GameObject | undefined | null>
@@ -491,7 +503,14 @@ export default class ObjectManager {
       // walk keeps this a field write, not a second pass over the list.
       o.renderOriginX = o.position.x;
       o.renderOriginY = o.position.y;
-      this.attributed(o, () => o.update?.());
+      // `attributed`, written out — the one bracket of the three that runs per
+      // object per tick, so it is the one that should not allocate a closure.
+      const previous = beginAttribution((o as { attributedTo?: DamageAttributable }).attributedTo);
+      try {
+        o.update?.();
+      } finally {
+        endAttribution(previous);
+      }
     }
 
     // two-pass remove: collect dead, then filter once (avoids O(n²) splice)

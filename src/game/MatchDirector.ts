@@ -1220,6 +1220,19 @@ export default class MatchDirector {
   private _wantsInvulnerable = new WeakSet<Champion>();
 
   /**
+   * How many champions the set above has been handed and not had taken back.
+   *
+   * A `WeakSet` cannot be asked whether it is empty, and `tick` runs every
+   * simulation step — several per drawn frame on a phone that is behind — so
+   * without this it walked the whole object list to build a roster, in every
+   * match, to re-apply a cheat almost no match has switched on. An upper bound
+   * rather than an exact count (a replaced bot leaves the set by being
+   * collected, and nothing sees that), which is the safe direction: above zero
+   * only ever means "do the walk".
+   */
+  private _invulnerableWanted = 0;
+
+  /**
    * Re-applies what the panel asked for to whoever can carry it now.
    *
    * Called from `Game.fixedUpdate`, beside `deathCamera.tick` — so it does not
@@ -1228,6 +1241,7 @@ export default class MatchDirector {
    * the first frame after the player closes the panel.
    */
   tick(): void {
+    if (this._invulnerableWanted === 0) return;
     this.reassertInvulnerable(this.game.player);
     for (const bot of this.bots()) this.reassertInvulnerable(bot);
   }
@@ -1273,13 +1287,16 @@ export default class MatchDirector {
     if (on) {
       // The intent first and unconditionally: `addBuff` below is allowed to
       // refuse (a dead champion), and the switch must still be on when it does.
-      this._wantsInvulnerable.add(unit);
+      if (!this._wantsInvulnerable.has(unit)) {
+        this._wantsInvulnerable.add(unit);
+        this._invulnerableWanted++;
+      }
       if (existing.length === 0) {
         unit.addBuff(new Invulnerable(INVULNERABLE_DURATION_MS, unit, unit));
       }
       return;
     }
-    this._wantsInvulnerable.delete(unit);
+    if (this._wantsInvulnerable.delete(unit)) this._invulnerableWanted--;
     for (const buff of existing) buff.deactivateBuff();
   }
 

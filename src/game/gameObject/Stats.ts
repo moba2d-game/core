@@ -569,7 +569,26 @@ export default class Stats {
     }
   }
 
+  /**
+   * The status `updateActionState` last resolved, and what it resolved it to.
+   *
+   * Every unit asks once per simulation step (`AttackableUnit.updateBuffs` →
+   * `setStatus`), and the status only changes when a buff lands or expires, so
+   * all but a handful of those calls re-derive the thirteen bits they derived
+   * the step before. The derivation reads nothing but `statusFlag` and writes
+   * nothing but those bits, so when the flag is the one last resolved *and*
+   * `actionState` is still exactly what that left behind, running it again
+   * cannot change anything. Both halves are checked: a LAN client overwrites
+   * `actionState` from the host's snapshot, and that must still be re-derived.
+   * `NaN` equals nothing, so the first call always runs.
+   */
+  private _resolvedStatus = NaN;
+  private _resolvedActionState = 0;
+
   updateActionState(statusFlag: number) {
+    if (statusFlag === this._resolvedStatus && this.actionState === this._resolvedActionState) {
+      return;
+    }
     this.setActionState(ActionState.CHARMED, hasFlag(statusFlag, StatusFlags.Charmed));
     this.setActionState(ActionState.FEARED, hasFlag(statusFlag, StatusFlags.Feared));
     this.setActionState(ActionState.TAUNTED, hasFlag(statusFlag, StatusFlags.Taunted));
@@ -588,6 +607,8 @@ export default class Stats {
     this.setActionState(ActionState.CAN_MOVE, !deniesMovement(statusFlag));
     this.setActionState(ActionState.CAN_CAST, !deniesCasting(statusFlag));
     this.setActionState(ActionState.CAN_ATTACK, !deniesAttacking(statusFlag));
+    this._resolvedStatus = statusFlag;
+    this._resolvedActionState = this.actionState;
   }
 
   /**

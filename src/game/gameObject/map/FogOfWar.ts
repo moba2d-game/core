@@ -9,6 +9,7 @@ import { hasLineOfSight } from '@/game/combat/Vision';
 import { stressTier } from '@/game/render/renderStress';
 import { revealedTo } from '@/game/combat/AttackReveal';
 import { resolveVisionTuning } from '@/game/config/mapTuning';
+import { prepareSight, sightContains } from './sightContainment';
 
 // The fog polygon is recomputed at the unit's live position every frame — no
 // throttle, no interpolation — so the gradient (drawn every frame at the
@@ -734,8 +735,11 @@ export default class FogOfWar {
     // Decomposed once for the whole scan rather than inside the predicate: the
     // polygon is the same for every candidate, and `pointPolygonConcave` would
     // otherwise re-run the full convex decomposition per candidate, per
-    // observer, per frame.
-    const sightParts = CollideUtils.prepareConcave(sightPoly);
+    // observer, per frame. `prepareSight` also builds each part's SAT polygon
+    // here instead of per candidate, and holds the lot for as long as
+    // `getSightPoly` keeps handing back this same array — a champion standing
+    // still decomposes nothing. See `sightContainment.ts`.
+    const sightParts = prepareSight(sightPoly);
 
     const playersInSight = this.game.objectManager.queryObjects({
       area: new Circle({
@@ -745,7 +749,7 @@ export default class FogOfWar {
       }),
       filters: [
         PredefinedFilters.type(AttackableUnit),
-        (o: any) => CollideUtils.pointPreparedConcave(o.position.x, o.position.y, sightParts),
+        (o: any) => sightContains(o.position.x, o.position.y, sightParts),
       ],
     });
 

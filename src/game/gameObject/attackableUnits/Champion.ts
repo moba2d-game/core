@@ -618,7 +618,11 @@ export default class Champion extends AttackableUnit {
   update() {
     super.update();
     this.basicAttack.update();
-    this.spells.forEach(spell => spell.update());
+    // A plain loop over the list as it stood when the walk began — the length
+    // is latched exactly as the patched `forEach` latched it — without a
+    // closure per champion per simulation step.
+    const spells = this.spells;
+    for (let i = 0, count = spells.length; i < count; i++) spells[i].update();
     // `?.` for the same reason `drawAttackOrder` uses it: prototype-only
     // champions built with Object.create never run a field initializer.
     this.recall?.update();
