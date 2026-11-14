@@ -83,6 +83,19 @@ export interface ObjectiveCall {
  * Where a team's bots should be, as a circle. See `BlackboardHost.botGoalArea`.
  * `null`/absent on a view means no such place: bots behave as they always did.
  */
+/**
+ * What the running Sự Kiện event means to a bot, read once per snapshot from
+ * `BlackboardHost.botEventHints`. Absent/null outside that mode.
+ */
+export interface EventHints {
+  /** Ground about to hurt: a meteor or bolt ring still counting down, a poison cloud. */
+  hazards: readonly { x: number; y: number; r: number }[];
+  /** Things worth walking over to (Mưa Vàng's coins). */
+  pickups: readonly { x: number; y: number }[];
+  /** `fight`: the event pays for kills or makes them cheaper. */
+  mood: 'fight' | 'normal';
+}
+
 export interface GoalArea {
   x: number;
   y: number;
@@ -122,6 +135,8 @@ export interface TeamView {
    * per snapshot from `BlackboardHost.botGoalArea`. `null`/absent: a normal map.
    */
   goal?: GoalArea | null;
+  /** The running event's hazards, pickups and mood. `null`/absent: no event. */
+  event?: EventHints | null;
   /** Where the team is going together, if anywhere. `null`/absent: no call. */
   objective?: ObjectiveCall | null;
   /** The bot living in the jungle — kept out of `laneAssignments`. Only a team of `JUNGLER_MIN_BOTS` bots has one. */
@@ -212,6 +227,8 @@ export interface BlackboardHost {
    * `Game` return that circle here. Time is `matchTimeMs`, passed as `nowMs`.
    */
   botGoalArea?: (teamId: unknown, nowMs: number) => GoalArea | null;
+  /** Optional seam: the Sự Kiện event's hints for bots (`EventHints`), or `null`. */
+  botEventHints?: () => EventHints | null;
 }
 
 export const EMPTY_VIEW: TeamView = Object.freeze({
@@ -385,6 +402,11 @@ export class TeamBlackboard {
     }
 
     this.views.clear();
+    // Once for every team, copied: the director reuses its arrays between calls.
+    const hints = game.botEventHints?.() ?? null;
+    const event: EventHints | null = hints
+      ? { hazards: hints.hazards.slice(), pickups: hints.pickups.slice(), mood: hints.mood }
+      : null;
     for (const teamId of teams) {
       const allies: Champion[] = [];
       const enemies: Champion[] = [];
@@ -410,6 +432,7 @@ export class TeamBlackboard {
         laneAssignments: assignments,
         camps,
         goal: game.botGoalArea?.(teamId, nowMs) ?? null,
+        event,
         objective: pickObjective(camps, allies, memory, nowMs),
         jungler,
       });

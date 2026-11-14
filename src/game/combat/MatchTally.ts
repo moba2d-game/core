@@ -1,3 +1,4 @@
+import { emptyTotals, type ItemEffectKind, type ItemTotals } from '@/game/combat/ItemLedger';
 /**
  * What a participant did this match.
  *
@@ -33,6 +34,24 @@ export default class MatchTally {
   damageDealt = 0;
   /** Damage that actually landed on this unit, after its own shields. */
   damageTaken = 0;
+  /**
+   * What each item did this match, keyed by its qualified id — see
+   * `combat/ItemLedger.ts` for what is exact and what is a share. Kept after
+   * the item is sold, so a match's total stays a match's total.
+   */
+  readonly itemEffects = new Map<string, ItemTotals>();
+
+  addItemEffect(item: { id: string; name: string }, kind: ItemEffectKind, amount: number): void {
+    if (!(amount > 0)) return;
+    let row = this.itemEffects.get(item.id);
+    if (!row) this.itemEffects.set(item.id, (row = emptyTotals(item.name)));
+    row[kind] += amount;
+  }
+
+  /** What `itemId` has done this match, or `null` for an item that has done nothing yet. */
+  totalsFor(itemId: string): Readonly<ItemTotals> | null {
+    return this.itemEffects.get(itemId) ?? null;
+  }
 
   /** Kills minus deaths — the figure `Champion.drawHealthBar` has always shown. */
   get score(): number {
@@ -59,6 +78,7 @@ export default class MatchTally {
     this.minionsKilled = 0;
     this.damageDealt = 0;
     this.damageTaken = 0;
+    this.itemEffects.clear();
   }
 }
 

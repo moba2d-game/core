@@ -5,6 +5,7 @@ import type {
   SpawnSlot,
   StructureSlot,
 } from '@/content/ContentPack';
+import { drawMoveMarker, moveMarkerPose, type MoveMarker } from './render/moveMarker';
 import { HotKeys, ItemHotKeys, SpellHotKeys } from './constants';
 import { withSimulationStep } from './simulationClock';
 import { contentRegistry } from '@/content/registry';
@@ -394,7 +395,8 @@ export default class Game {
   turrets: Turret[] = [];
   monsters: Monster[] = [];
 
-  clickedPoint = { x: 0, y: 0, size: 0 };
+  /** The last move click, drawn as a fading ring (`render/moveMarker.ts`). */
+  moveMarker: MoveMarker | null = null;
   worldMouse!: p5.Vector;
   paused = false;
   /**
@@ -954,18 +956,17 @@ export default class Game {
       // the session throttles and serializes; the ground pulse still draws,
       // because the click *was* accepted, just remotely.
       if (this.net?.interceptPointer(this.worldMouse)) {
-        this.clickedPoint = { x: this.worldMouse.x, y: this.worldMouse.y, size: 40 };
+        this.moveMarker = { x: this.worldMouse.x, y: this.worldMouse.y, atMs: this.matchTimeMs };
       } else {
         const target = issuePointerOrder(this.player, this.objectManager, this.worldMouse);
         // A move gets the existing green ground pulse. An attack already has the
         // red target ring drawn by Champion.drawAttackOrder, so stacking both
         // signals on an enemy body would say two different things at once.
         if (!target) {
-          this.clickedPoint = { x: this.worldMouse.x, y: this.worldMouse.y, size: 40 };
+          this.moveMarker = { x: this.worldMouse.x, y: this.worldMouse.y, atMs: this.matchTimeMs };
         }
       }
     }
-    this.clickedPoint.size *= 0.9;
 
     // Before the spell input controller ticks: a charge held under a thumb must
     // have this frame's aim in hand before its `hold` runs, or the telegraph
@@ -1001,6 +1002,13 @@ export default class Game {
    * next circle while the warning is up, otherwise the current one. Read by
    * `TeamBlackboard` once per snapshot; see `BlackboardHost.botGoalArea`.
    */
+  /** Sự Kiện's hints for bots — hazards to step out of, coins, mood. See `TeamBlackboard.EventHints`. */
+  botEventHints(): { hazards: readonly { x: number; y: number; r: number }[]; pickups: readonly { x: number; y: number }[]; mood: 'fight' | 'normal' } | null {
+    const director = this.eventDirector;
+    if (!director?.activeEvent) return null;
+    return { hazards: director.hazards(), pickups: director.pickups(), mood: director.mood };
+  }
+
   botGoalArea(teamId: unknown, nowMs: number): { x: number; y: number; r: number } | null {
     const zone = this.zone;
     // Not a zone match: Sự Kiện's objective events (springs, chest) borrow the hook.
@@ -1100,17 +1108,14 @@ export default class Game {
 
     this.camera.makeDraw(() => {
       this.terrainMap.draw();
-      if (this.clickedPoint.size > 0) {
-        push();
-        noStroke();
-        fill('green');
-        ellipse(this.clickedPoint.x, this.clickedPoint.y, this.clickedPoint.size);
-        pop();
-      }
       this.player.spells.forEach(spell => {
         if (spell.willDrawPreview) spell.drawPreview?.();
       });
       this.objectManager.draw(alpha);
+      // After the objects: a pack that paints its own floor does it with a
+      // ground object (Tidelight's art at zIndex -5), which would cover it.
+      const markerPose = moveMarkerPose(this.moveMarker, this.matchTimeMs);
+      if (markerPose && this.moveMarker) drawMoveMarker(drawingContext, this.moveMarker, markerPose);
       if (this.zone) {
         drawZone(drawingContext, this.zone.state(this.matchTimeMs), this.camera.getBoundingBox());
       }

@@ -1,6 +1,8 @@
 import Speedup from '@/game/gameObject/buffs/Speedup';
 import Nearsight from '@/game/gameObject/buffs/Nearsight';
 import StatAmp from '@/game/gameObject/buffs/StatAmp';
+import Shield from '@/game/gameObject/buffs/Shield';
+import BuffAddType from '@/game/enums/BuffAddType';
 import CombatText, { GOLD_TEXT_COLOR } from '@/game/gameObject/helpers/CombatText';
 import type { UnitDeathEvent } from '@/game/gameObject/attackableUnits/AttackableUnit';
 import type Buff from '@/game/gameObject/Buff';
@@ -14,6 +16,7 @@ import {
   HealingSpring,
   LightningStrike,
   MeteorStrike,
+  ToxicCloud,
   TreasureChest,
 } from './eventObjects';
 import {
@@ -24,6 +27,19 @@ import {
   type EventView,
 } from './eventVfx';
 import {
+  AEGIS_PULSE_MS,
+  AEGIS_SHIELD_FRACTION,
+  BLOOD_MOON_OMNIVAMP,
+  GIANTS_ATTACK_DAMAGE,
+  GIANTS_SIZE,
+  MANA_SURGE_ABILITY_HASTE,
+  MANA_SURGE_FRACTION_PER_SEC,
+  MANA_SURGE_PULSE_MS,
+  POISON_CLOUD_COUNT,
+  POISON_MIN_SEPARATION,
+  POISON_RADIUS,
+  METEOR_RADIUS,
+  STORM_RADIUS,
   BOUNTY_BONUS_GOLD,
   CHEST_RADIUS,
   EVENT_MAX_DURATION_MS,
@@ -78,6 +94,49 @@ export class FogBuff extends Nearsight {
   }
 }
 
+/** Huyết Nguyệt: every hit pays some of itself back as health. */
+export class BloodMoonBuff extends StatAmp {
+  name = 'Huyết Nguyệt';
+  bonuses = { omnivamp: { flatBonus: BLOOD_MOON_OMNIVAMP } };
+}
+
+/** Khổng Lồ: a bigger body and a harder swing. */
+export class GiantBuff extends StatAmp {
+  name = 'Khổng Lồ';
+  bonuses = {
+    size: { percentBaseBonus: GIANTS_SIZE },
+    attackDamage: { percentBaseBonus: GIANTS_ATTACK_DAMAGE },
+  };
+}
+
+/** Tràn Linh Lực's haste half; the mana half is a pulse in the run. */
+export class ManaSurgeBuff extends StatAmp {
+  name = 'Tràn Linh Lực';
+  bonuses = { abilityHaste: { flatBonus: MANA_SURGE_ABILITY_HASTE } };
+}
+
+/** Khiên Thần: one live shield per champion, each new one replacing the last. */
+export class AegisShield extends Shield {
+  name = 'Khiên Thần';
+  buffAddType = BuffAddType.REPLACE_EXISTING;
+  stackId = 'event:aegis';
+  color: [number, number, number] = [255, 225, 120];
+}
+
+/** Somewhere a bot should not be standing, and until when. */
+export interface EventHazard {
+  x: number;
+  y: number;
+  r: number;
+}
+
+/**
+ * How a running event should colour a bot's appetite for a fight. `fight`:
+ * the event pays for kills or makes fights cheaper (bounty, frenzy, blood
+ * moon, giants, aegis, mana surge). `normal`: no opinion.
+ */
+export type EventMood = 'fight' | 'normal';
+
 /** What an event needs from the match. `Game` supplies one; tests supply a stub. */
 export interface EventWorld {
   readonly game: GameObjectGameContext;
@@ -112,6 +171,10 @@ interface EventRun {
   end?(): void;
   /** Where this team's bots should go for this event's objective, if it has one. */
   goal?(teamId: unknown): GoalArea | null;
+  /** Ground that is about to hurt (a ring still counting down, a cloud). */
+  hazards?(now: number): readonly EventHazard[];
+  /** Things lying on the ground worth walking to (coins). */
+  pickups?(): readonly Point[];
 }
 
 interface Timing {
@@ -139,21 +202,45 @@ function goldRain(world: EventWorld, t: Timing): EventRun {
     drops.push({ at: t.startMs + k * step, p: points[Math.floor(rng() * points.length)] });
   }
   let next = 0;
+  const coins: GoldCoin[] = [];
+  const live: Point[] = [];
   return {
+    pickups() {
+      live.length = 0;
+      for (const c of coins) if (!c.toRemove) live.push(c.position);
+      return live;
+    },
     tick(now) {
       while (next < drops.length && now >= drops[next].at) {
         const { p } = drops[next++];
-        world.spawn(
-          new GoldCoin({
+        const coin = new GoldCoin({
             game: world.game,
             x: p.x,
             y: p.y,
             now: () => world.now(),
             champions: () => world.champions(),
-          })
-        );
+          });
+        coins.push(coin);
+        world.spawn(coin);
       }
     },
+  };
+}
+
+/** The strikes still counting down, as hazards; reuses one array. */
+function pendingStrikes<T extends { position: Point; toRemove: boolean }>(
+  strikes: T[],
+  atMs: (s: T) => number,
+  r: number
+): (now: number) => EventHazard[] {
+  const out: EventHazard[] = [];
+  return now => {
+    out.length = 0;
+    for (const s of strikes) {
+      if (s.toRemove || now >= atMs(s)) continue;
+      out.push({ x: s.position.x, y: s.position.y, r });
+    }
+    return out;
   };
 }
 
@@ -163,7 +250,9 @@ function meteors(world: EventWorld, t: Timing): EventRun {
   const step = (t.endMs - t.startMs - METEOR_WARNING_MS) / METEOR_COUNT;
   const rolls = Array.from({ length: METEOR_COUNT }, () => [rng(), rng(), rng()]);
   let next = 0;
+  const strikes: MeteorStrike[] = [];
   return {
+    hazards: pendingStrikes(strikes, m => m.impactAtMs, METEOR_RADIUS),
     tick(now) {
       while (next < METEOR_COUNT && now >= t.startMs + next * step) {
         const k = next++;
@@ -182,9 +271,9 @@ function meteors(world: EventWorld, t: Timing): EventRun {
           y = p.y;
         }
         if (x === undefined || y === undefined) continue;
-        world.spawn(
-          new MeteorStrike({ game: world.game, x, y, now: () => world.now(), champions: () => world.champions() })
-        );
+        const strike = new MeteorStrike({ game: world.game, x, y, now: () => world.now(), champions: () => world.champions() });
+        strikes.push(strike);
+        world.spawn(strike);
       }
     },
   };
@@ -281,7 +370,9 @@ function storm(world: EventWorld, t: Timing): EventRun {
   const total = Math.floor((t.endMs - t.startMs - STORM_WARNING_MS) / STORM_STRIKE_INTERVAL_MS);
   const rolls = Array.from({ length: total }, () => [rng(), rng(), rng()]);
   let next = 0;
+  const strikes: LightningStrike[] = [];
   return {
+    hazards: pendingStrikes(strikes, b => b.strikeAtMs, STORM_RADIUS),
     tick(now) {
       while (next < total && now >= t.startMs + next * STORM_STRIKE_INTERVAL_MS) {
         const [u1, u2, u3] = rolls[next];
@@ -308,9 +399,9 @@ function storm(world: EventWorld, t: Timing): EventRun {
         }
         next++;
         if (x === undefined || y === undefined) continue;
-        world.spawn(
-          new LightningStrike({ game: world.game, x, y, now: () => world.now(), champions: () => world.champions() })
-        );
+        const bolt = new LightningStrike({ game: world.game, x, y, now: () => world.now(), champions: () => world.champions() });
+        strikes.push(bolt);
+        world.spawn(bolt);
       }
     },
   };
@@ -329,6 +420,70 @@ function bounty(world: EventWorld): EventRun {
   });
   return { tick() {}, end: stop };
 }
+
+/** Khiên Thần: a fresh shield on every living champion every `AEGIS_PULSE_MS`. */
+function aegis(world: EventWorld, t: Timing): EventRun {
+  let nextMs = t.startMs;
+  return {
+    tick(now) {
+      if (now < nextMs) return;
+      nextMs = now + AEGIS_PULSE_MS;
+      // Lasts a little past the next pulse, so there is no bare instant between two.
+      const ms = Math.max(1, Math.min(AEGIS_PULSE_MS + 300, t.endMs - now));
+      for (const c of world.champions()) {
+        if (c.isDead) continue;
+        const shield = new AegisShield(ms, c, c);
+        shield.amount = Math.round(c.stats.maxHealth.value * AEGIS_SHIELD_FRACTION);
+        c.addBuff(shield);
+      }
+    },
+  };
+}
+
+function poison(world: EventWorld, t: Timing): EventRun {
+  const rng = seededRandom(mixSeed(t.seed, t.index, 5));
+  const spots = pickSeparated(world.reachable(), rng, POISON_CLOUD_COUNT, POISON_MIN_SEPARATION);
+  const clouds = spots.map(p => new ToxicCloud({ ...timed(world, t), x: p.x, y: p.y }));
+  for (const cloud of clouds) world.spawn(cloud);
+  const out: EventHazard[] = [];
+  return {
+    tick() {},
+    hazards() {
+      out.length = 0;
+      for (const c of clouds) if (!c.toRemove) out.push({ x: c.position.x, y: c.position.y, r: POISON_RADIUS });
+      return out;
+    },
+  };
+}
+
+function manaSurge(world: EventWorld, t: Timing): EventRun {
+  const haste = buffEveryone(world, t, (c, ms) => new ManaSurgeBuff(ms, c, c));
+  let nextMs = t.startMs;
+  return {
+    tick(now) {
+      haste.tick(now);
+      if (now < nextMs) return;
+      nextMs = now + MANA_SURGE_PULSE_MS;
+      const share = (MANA_SURGE_PULSE_MS / 1000) * MANA_SURGE_FRACTION_PER_SEC;
+      for (const c of world.champions()) {
+        if (!c.isDead) c.restoreMana(c.stats.maxMana.value * share);
+      }
+    },
+  };
+}
+
+/** Which events make a fight worth more than usual (see `EventMood`). */
+const NO_HAZARDS: readonly EventHazard[] = Object.freeze([]);
+const NO_POINTS: readonly Point[] = Object.freeze([]);
+
+const FIGHT_EVENTS: ReadonlySet<RandomEventId> = new Set([
+  'bounty',
+  'frenzy',
+  'bloodMoon',
+  'giants',
+  'aegis',
+  'manaSurge',
+]);
 
 function beginRun(def: RandomEventDef, world: EventWorld, t: Timing): EventRun {
   switch (def.id) {
@@ -356,6 +511,16 @@ function beginRun(def: RandomEventDef, world: EventWorld, t: Timing): EventRun {
       return storm(world, t);
     case 'bounty':
       return bounty(world);
+    case 'bloodMoon':
+      return buffEveryone(world, t, (c, ms) => new BloodMoonBuff(ms, c, c));
+    case 'giants':
+      return buffEveryone(world, t, (c, ms) => new GiantBuff(ms, c, c));
+    case 'aegis':
+      return aegis(world, t);
+    case 'poison':
+      return poison(world, t);
+    case 'manaSurge':
+      return manaSurge(world, t);
   }
 }
 
@@ -379,6 +544,21 @@ export default class EventDirector {
   /** Where `teamId`'s bots should go for the running event's objective; null when it has none. */
   goalArea(teamId: unknown): GoalArea | null {
     return this.active?.run.goal?.(teamId) ?? null;
+  }
+
+  /** Ground a bot should get out of right now. Empty (shared) when nothing threatens. */
+  hazards(): readonly EventHazard[] {
+    return this.active?.run.hazards?.(this.world.now()) ?? NO_HAZARDS;
+  }
+
+  /** Coins and the like a bot may walk over to collect. */
+  pickups(): readonly Point[] {
+    return this.active?.run.pickups?.() ?? NO_POINTS;
+  }
+
+  /** Whether the running event rewards fighting (`EventMood`). */
+  get mood(): EventMood {
+    return this.active && FIGHT_EVENTS.has(this.active.def.id) ? 'fight' : 'normal';
   }
 
   /** Index of the next event that has not started yet. */

@@ -670,9 +670,13 @@ export default class Champion extends AttackableUnit {
   private armPassive(passive: Spell | null): void {
     if (!passive || this._armedPassives?.has(passive)) return;
 
+    // A refused press (stunned, silenced, mid-channel on the frame an item was
+    // bought) must be tried again next frame. Marking it armed first left an
+    // on-hit item doing nothing for the rest of that life — found live with a
+    // bot's Monkey King Bar. `passiveArming.test.ts`.
+    if (!passive.isCastableNow) return;
     const here = Object.freeze({ x: this.position.x, y: this.position.y });
-    this._armedPassives?.add(passive);
-    passive.press(
+    const accepted = passive.press(
       Object.freeze({
         spellId: passive.id,
         activationId: uuidv4(),
@@ -686,6 +690,7 @@ export default class Champion extends AttackableUnit {
         direction: Object.freeze({ x: 0, y: 0 }),
       })
     );
+    if (accepted) this._armedPassives?.add(passive);
   }
 
   draw(options: AttackableUnitRenderOptions = {}) {

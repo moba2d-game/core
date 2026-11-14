@@ -333,6 +333,9 @@ export function buildHeldItem(champion: Champion, def: QualifiedItem): HeldItem 
     // the wearer's `attackDamage`, so amplifying it by `abilityPower` too would
     // pay a single purchase out of two stats.
     spell.damageScalesWithAbilityPower = false;
+    // So every hit the item's own code lands is counted for it
+    // (`MatchTally.itemDamage`, shown on the item's tooltip).
+    spell.sourceItem = { id: def.id, name: def.name };
     return spell;
   };
 

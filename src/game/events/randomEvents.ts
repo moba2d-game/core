@@ -41,7 +41,12 @@ export type RandomEventId =
   | 'springs'
   | 'chest'
   | 'storm'
-  | 'bounty';
+  | 'bounty'
+  | 'bloodMoon'
+  | 'giants'
+  | 'aegis'
+  | 'poison'
+  | 'manaSurge';
 
 /** Tuning. Exported because the tests pin behaviour against these, not against copies. */
 export const GOLD_RAIN_DURATION_MS = 10_000;
@@ -104,6 +109,40 @@ export const STORM_AIM_JITTER = 160;
 export const BOUNTY_DURATION_MS = 10_000;
 /** Extra gold to the champion a kill is booked to, on top of the normal bounty. */
 export const BOUNTY_BONUS_GOLD = 150;
+
+export const BLOOD_MOON_DURATION_MS = 10_000;
+/** `omnivamp` is a fraction of all damage dealt, paid back as health: 0.3 is 30%. */
+export const BLOOD_MOON_OMNIVAMP = 0.3;
+
+export const GIANTS_DURATION_MS = 9_000;
+/** `percentBaseBonus` on body size (a fraction): 0.4 is 40% bigger, body and hitbox both. */
+export const GIANTS_SIZE = 0.4;
+/** `percentBaseBonus` on attack damage, a fraction. */
+export const GIANTS_ATTACK_DAMAGE = 0.25;
+
+export const AEGIS_DURATION_MS = 10_000;
+/** A fresh shield this often, replacing what is left of the last one. */
+export const AEGIS_PULSE_MS = 3_000;
+/** The shield, as a share of the champion's max health. */
+export const AEGIS_SHIELD_FRACTION = 0.15;
+
+export const POISON_DURATION_MS = 10_000;
+export const POISON_CLOUD_COUNT = 4;
+export const POISON_RADIUS = 180;
+export const POISON_PULSE_MS = 500;
+/** Per pulse, so 8 a second: on a ~100 health pool, ten seconds inside is most of a life. */
+export const POISON_DAMAGE = 4;
+/** World px per second each cloud creeps toward the nearest living champion. */
+export const POISON_DRIFT_SPEED = 45;
+export const POISON_MIN_SEPARATION = 700;
+export const POISON_SOURCE = 'Mây Độc';
+
+export const MANA_SURGE_DURATION_MS = 10_000;
+/** Share of max mana returned per second: an empty pool is full again in two. */
+export const MANA_SURGE_FRACTION_PER_SEC = 0.5;
+export const MANA_SURGE_PULSE_MS = 250;
+/** Ability haste is *points*, not a fraction (`Stats.hasteCooldownMultiplier`): 50 is a third off. */
+export const MANA_SURGE_ABILITY_HASTE = 50;
 
 export interface RandomEventDef {
   readonly id: RandomEventId;
@@ -177,6 +216,41 @@ export const RANDOM_EVENTS: readonly RandomEventDef[] = Object.freeze([
     blurb: 'Hạ tướng địch nhận thêm 150 vàng.',
     durationMs: BOUNTY_DURATION_MS,
     color: [255, 120, 160],
+  },
+  {
+    id: 'bloodMoon',
+    name: 'Huyết Nguyệt',
+    blurb: 'Mọi sát thương hút lại 30% thành máu.',
+    durationMs: BLOOD_MOON_DURATION_MS,
+    color: [230, 60, 70],
+  },
+  {
+    id: 'giants',
+    name: 'Khổng Lồ',
+    blurb: 'Mọi tướng to ra 40%, đánh mạnh hơn 25%.',
+    durationMs: GIANTS_DURATION_MS,
+    color: [255, 160, 90],
+  },
+  {
+    id: 'aegis',
+    name: 'Khiên Thần',
+    blurb: 'Mỗi 3 giây mọi tướng nhận một lá khiên.',
+    durationMs: AEGIS_DURATION_MS,
+    color: [255, 225, 120],
+  },
+  {
+    id: 'poison',
+    name: 'Mây Độc',
+    blurb: 'Mây độc bò về phía tướng gần nhất. Tránh xa!',
+    durationMs: POISON_DURATION_MS,
+    color: [150, 230, 90],
+  },
+  {
+    id: 'manaSurge',
+    name: 'Tràn Linh Lực',
+    blurb: 'Mana hồi gần như vô hạn, chiêu hồi nhanh hơn.',
+    durationMs: MANA_SURGE_DURATION_MS,
+    color: [110, 150, 255],
   },
   {
     id: 'fog',

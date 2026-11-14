@@ -187,6 +187,26 @@ const grantedAmount = (stat: string, kind: string, amount: number): string => {
   return signed(amount);
 };
 
+/**
+ * The same bonuses as `describeStatBonuses`, one stat to a plain-text line —
+ * for a list that styles its own numbers (an item tooltip's "Trong trận này").
+ */
+export function statBonusLines(
+  bonuses: Partial<Record<string, Partial<Record<string, number>>>>,
+  stacks = 1
+): { label: string; amount: string }[] {
+  const lines: { label: string; amount: string }[] = [];
+  for (const [stat, bonus] of Object.entries(bonuses)) {
+    const label = STAT_LABEL[stat as ItemStatKey];
+    if (!label || !bonus) continue;
+    for (const [kind, raw] of Object.entries(bonus)) {
+      const amount = (raw ?? 0) * stacks;
+      if (amount) lines.push({ label, amount: grantedAmount(stat, kind, amount) });
+    }
+  }
+  return lines;
+}
+
 export function describeStatBonuses(
   bonuses: Partial<Record<string, Partial<Record<string, number>>>>,
   stacks = 1

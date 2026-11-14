@@ -147,6 +147,12 @@ const lifted = (slot: number): boolean => {
         <span class="amount">{{ line.amount }}</span> {{ line.label }}
       </li>
     </ul>
+    <ul v-if="hud.spellHover.totals?.length" class="item-totals">
+      <li class="item-totals-title">Trong trận này</li>
+      <li v-for="line of hud.spellHover.totals" :key="line.label">
+        <span class="amount">{{ line.amount }}</span> {{ line.label }}
+      </li>
+    </ul>
     <p v-if="hud.spellHover.description" class="body" v-html="hud.spellHover.description"></p>
   </div>
 

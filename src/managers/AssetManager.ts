@@ -156,25 +156,68 @@ const defaultLoaders: AssetLoaders = {
  * question that matters — the purge is wholesale, not per image.
  */
 const PROBE_INK = 199;
+/**
+ * Big enough to be GPU-backed. Chrome keeps a small 2D canvas in CPU memory,
+ * and only a GPU-backed one is lost when the app goes to the background — the
+ * 1x1 probe this replaced was never lost, so a short hop to another app came
+ * back to blank icons and a black map with nothing noticing ("Back ra app khác
+ * xong quay lại game là nó đen hết luôn"). 256² is well past Chrome's floor.
+ */
+export const PROBE_SIZE = 256;
 let probeCanvas: HTMLCanvasElement | null = null;
+/** Set by the browser's own `contextlost`/`contextrestored`; cleared by a re-arm. */
+let lostSinceArm = false;
+
+let makeProbeCanvas = (): HTMLCanvasElement | null =>
+  typeof document === 'undefined' ? null : document.createElement('canvas');
+
+/** Tests stand in for the browser's canvas here; the next use builds a fresh probe from it. */
+export function setProbeCanvasFactory(make: () => HTMLCanvasElement | null): void {
+  makeProbeCanvas = make;
+  probeCanvas = null;
+  lostSinceArm = false;
+}
+
+function ensureProbe(): HTMLCanvasElement | null {
+  if (!probeCanvas) {
+    probeCanvas = makeProbeCanvas();
+    if (!probeCanvas) return null;
+    probeCanvas.width = PROBE_SIZE;
+    probeCanvas.height = PROBE_SIZE;
+    // The browser says so itself (Chrome 99+), which is the only signal that
+    // does not depend on our probe being purged the same way the assets were.
+    probeCanvas.addEventListener('contextlost', () => {
+      lostSinceArm = true;
+    });
+    // Restored means blank: repaint now, without waiting for a resume signal
+    // that may already have fired while the context was still lost.
+    probeCanvas.addEventListener('contextrestored', () => {
+      lostSinceArm = true;
+      void AssetManager.recoverIfLost();
+    });
+  }
+  return probeCanvas;
+}
 
 function armProbe(): void {
-  if (typeof document === 'undefined') return;
-  if (!probeCanvas) {
-    probeCanvas = document.createElement('canvas');
-    probeCanvas.width = 1;
-    probeCanvas.height = 1;
-  }
-  const context = probeCanvas.getContext('2d');
+  const canvas = ensureProbe();
+  lostSinceArm = false;
+  const context = canvas?.getContext('2d');
   if (!context) return;
   context.fillStyle = `rgb(${PROBE_INK},${PROBE_INK},${PROBE_INK})`;
   context.fillRect(0, 0, 1, 1);
 }
 
 function probeLost(): boolean {
+  if (lostSinceArm) return true;
   if (!probeCanvas) return false;
   const context = probeCanvas.getContext('2d');
   if (!context) return false;
+  if (typeof context.isContextLost === 'function') {
+    // No pixel read where the browser can answer: Chrome moves a canvas that is
+    // read back to CPU memory, which is exactly what makes a probe un-purgeable.
+    return context.isContextLost();
+  }
   try {
     // Alpha, not the ink: a reclaimed backing store reads back fully
     // transparent, and comparing the colour would also flag a browser that
@@ -185,6 +228,9 @@ function probeLost(): boolean {
     return true;
   }
 }
+
+/** The probe canvas, created on first use — for tests that play the browser's part. */
+export const backingStoreProbe = (): HTMLCanvasElement | null => ensureProbe();
 
 /**
  * Decodes a URL into something `drawImage` accepts.

@@ -13,6 +13,11 @@ import {
   METEOR_RADIUS,
   METEOR_SOURCE,
   METEOR_WARNING_MS,
+  POISON_DAMAGE,
+  POISON_DRIFT_SPEED,
+  POISON_PULSE_MS,
+  POISON_RADIUS,
+  POISON_SOURCE,
   SPRING_HEAL_FRACTION_PER_SEC,
   SPRING_MANA_FRACTION_PER_SEC,
   SPRING_PULSE_MS,
@@ -454,6 +459,110 @@ const teamRgb = (teamId: string): [number, number, number] =>
  * both present pauses everyone; opening pays every member of the opening team,
  * wherever they are standing.
  */
+/**
+ * Mây Độc: a green cloud that creeps toward the nearest living champion and
+ * bites whoever stands in it. Slow on purpose (`POISON_DRIFT_SPEED`, well under
+ * a walk), so it is a thing to step away from, not a thing that catches you.
+ * It moves on match time inside `update`, so a pause freezes it.
+ */
+export class ToxicCloud extends GameObject {
+  readonly startedAtMs: number;
+  readonly endsAtMs: number;
+  private nextPulseMs: number;
+  private lastMoveMs: number;
+  private readonly now: () => number;
+  private readonly champions: () => readonly Champion[];
+
+  constructor({ game, x, y, now, champions, endsAtMs }: TimedEventObjectOptions) {
+    super({ game, position: createVector(x, y), collisionRadius: 1 });
+    this.now = now;
+    this.champions = champions;
+    this.startedAtMs = now();
+    this.lastMoveMs = this.startedAtMs;
+    // The first bite waits a second: room to see the cloud before it hurts.
+    this.nextPulseMs = this.startedAtMs + 1_000;
+    this.endsAtMs = endsAtMs;
+    this.zIndex = GROUND_Z_INDEX;
+  }
+
+  get radius(): number {
+    return POISON_RADIUS;
+  }
+
+  getDisplayBoundingBox() {
+    return this.squareDisplayBoundingBox(POISON_RADIUS * 2.4);
+  }
+
+  contains(champion: Champion): boolean {
+    const dx = champion.position.x - this.position.x;
+    const dy = champion.position.y - this.position.y;
+    return dx * dx + dy * dy <= POISON_RADIUS * POISON_RADIUS;
+  }
+
+  update(): void {
+    if (this.toRemove) return;
+    const now = this.now();
+    if (now >= this.endsAtMs) {
+      this.toRemove = true;
+      return;
+    }
+    const dt = Math.max(0, now - this.lastMoveMs);
+    this.lastMoveMs = now;
+    let target: Champion | null = null;
+    let best = Infinity;
+    for (const c of this.champions()) {
+      if (c.isDead) continue;
+      const d = (c.position.x - this.position.x) ** 2 + (c.position.y - this.position.y) ** 2;
+      if (d < best) {
+        best = d;
+        target = c;
+      }
+    }
+    if (target && best > 1) {
+      const d = Math.sqrt(best);
+      const step = Math.min(d, (POISON_DRIFT_SPEED * dt) / 1000);
+      this.position.x += ((target.position.x - this.position.x) / d) * step;
+      this.position.y += ((target.position.y - this.position.y) / d) * step;
+    }
+    if (now < this.nextPulseMs) return;
+    this.nextPulseMs = now + POISON_PULSE_MS;
+    for (const champion of this.champions()) {
+      if (champion.isDead || !this.contains(champion)) continue;
+      champion.takeDamage(POISON_DAMAGE, undefined, 'MAGIC', POISON_SOURCE);
+    }
+  }
+
+  draw(): void {
+    const now = this.now();
+    const fade = lifeFade(now, this.startedAtMs, this.endsAtMs);
+    if (fade <= 0) return;
+    const { x, y } = this.position;
+    const R = POISON_RADIUS;
+    push();
+    noStroke();
+    // Five puffs turning slowly around the centre, one in the middle.
+    for (let i = 0; i < 5; i++) {
+      const a = now / 2400 + (i * TAU) / 5;
+      fill(110, 190, 60, 48 * fade);
+      circle(x + Math.cos(a) * R * 0.45, y + Math.sin(a) * R * 0.45, R * 1.05);
+    }
+    fill(150, 230, 80, 55 * fade);
+    circle(x, y, R * 1.1);
+    noFill();
+    stroke(170, 255, 90, 170 * fade);
+    strokeWeight(3);
+    circle(x, y, R * 2);
+    // Bubbles popping on the surface.
+    noStroke();
+    for (let i = 0; i < 4; i++) {
+      const k = (now / 1300 + i * 0.29) % 1;
+      fill(200, 255, 140, 200 * Math.sin(k * Math.PI) * fade);
+      circle(x + Math.cos(i * 1.9) * R * 0.5, y + Math.sin(i * 2.3) * R * 0.5, 5 + k * 9);
+    }
+    pop();
+  }
+}
+
 export class TreasureChest extends GameObject {
   readonly startedAtMs: number;
   readonly endsAtMs: number;

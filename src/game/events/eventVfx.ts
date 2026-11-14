@@ -139,8 +139,76 @@ export function drawEventIcon(
       line(cx - s * 1.1, cy, cx + s * 1.1, cy);
       line(cx, cy - s * 1.1, cx, cy + s * 1.1);
       break;
+    case 'bloodMoon':
+      noStroke();
+      fill(r, g, b);
+      circle(cx, cy, s * 1.8);
+      fill(0, 0, 0, 150);
+      circle(cx + s * 0.45, cy - s * 0.3, s * 1.4);
+      break;
+    case 'giants':
+      // A small figure beside a big one.
+      noStroke();
+      fill(r, g, b);
+      circle(cx - s * 0.6, cy + s * 0.3, s * 0.6);
+      circle(cx + s * 0.3, cy - s * 0.1, s * 1.4);
+      break;
+    case 'aegis':
+      beginShape();
+      vertex(cx, cy - s);
+      vertex(cx + s * 0.85, cy - s * 0.55);
+      vertex(cx + s * 0.6, cy + s * 0.5);
+      vertex(cx, cy + s);
+      vertex(cx - s * 0.6, cy + s * 0.5);
+      vertex(cx - s * 0.85, cy - s * 0.55);
+      endShape(CLOSE);
+      break;
+    case 'poison':
+      noStroke();
+      fill(r, g, b);
+      circle(cx - s * 0.45, cy + s * 0.15, s * 1.0);
+      circle(cx + s * 0.45, cy + s * 0.15, s * 1.0);
+      circle(cx, cy - s * 0.3, s * 1.2);
+      break;
+    case 'manaSurge':
+      noStroke();
+      fill(r, g, b);
+      quad(cx, cy - s, cx + s * 0.6, cy, cx, cy + s, cx - s * 0.6, cy);
+      break;
   }
   pop();
+}
+
+/**
+ * Below this many CSS px tall the screen is a landscape phone: there is no
+ * spare band under the HUD's top row, so the banner becomes one slim line at
+ * the top edge and the start title shrinks into the top quarter. On a phone the
+ * full panel sat across 25-40% of the height — over the fight.
+ */
+export const COMPACT_EVENT_HEIGHT = 560;
+
+export interface BannerLayout {
+  compact: boolean;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+export function eventBannerLayout(viewW: number, viewH: number): BannerLayout {
+  if (viewH < COMPACT_EVENT_HEIGHT) {
+    // Under the clock pill (top centre, ~34px), clear of minimap and shop buttons.
+    const w = Math.min(viewW * 0.38, 320);
+    return { compact: true, x: viewW / 2 - w / 2, y: 38, h: 26, w };
+  }
+  const w = Math.min(viewW - 24, 440);
+  // Below the match clock pill and the kill feed, both top centre.
+  return { compact: false, x: viewW / 2 - w / 2, y: 100, h: 62, w };
+}
+
+export function eventTitleLayout(viewW: number, viewH: number): { size: number; cy: number } {
+  if (viewH < COMPACT_EVENT_HEIGHT) return { size: Math.min(30, viewW * 0.06), cy: viewH * 0.2 };
+  return { size: Math.min(58, viewW * 0.11), cy: viewH * 0.3 };
 }
 
 /** The slim panel under the top edge: accent strip, icon, title, blurb, time bar. */
@@ -151,11 +219,10 @@ export function drawEventBanner(view: EventView): void {
   const out = clamp01(view.leftMs / 250);
   const a = ease * out;
   if (a <= 0) return;
-  const w = Math.min(width - 24, 440);
-  const h = 62;
-  const x = width / 2 - w / 2;
-  // Below the match clock pill and the kill feed, both top centre.
-  const y = 100 - (1 - ease) * 110;
+  const box = eventBannerLayout(width, height);
+  if (box.compact) return drawCompactBanner(view, box, ease, a);
+  const { w, h, x } = box;
+  const y = box.y - (1 - ease) * 110;
   push();
   noStroke();
   fill(0, 0, 0, 40 * a);
@@ -184,6 +251,28 @@ export function drawEventBanner(view: EventView): void {
   pop();
 }
 
+/** One line: icon, "label  Ns", and the time bar along its bottom edge. No blurb — the start title carries it. */
+function drawCompactBanner(view: EventView, box: BannerLayout, ease: number, a: number): void {
+  const [r, g, b] = view.color;
+  const { x, w, h } = box;
+  const y = box.y - (1 - ease) * (box.y + h);
+  push();
+  noStroke();
+  fill(14, 16, 24, 190 * a);
+  rect(x, y, w, h, h / 2);
+  drawEventIcon(view.id, x + h / 2 + 2, y + h / 2, 7, r, g, b);
+  textAlign(LEFT, CENTER);
+  fill(r, g, b, 255 * a);
+  textSize(13);
+  text(view.label, x + h + 4, y + h / 2 - 1);
+  const share = view.phase === 'active' ? 1 - view.progress : view.progress;
+  fill(255, 255, 255, 30 * a);
+  rect(x + h / 2, y + h - 4, w - h, 2, 1);
+  fill(r, g, b, 230 * a);
+  rect(x + h / 2, y + h - 4, Math.max(2, (w - h) * clamp01(share)), 2, 1);
+  pop();
+}
+
 /** The big centre title when an event starts. */
 export function drawEventTitle(view: EventView): void {
   if (view.phase !== 'active' || view.activeAgeMs < 0 || view.activeAgeMs > TITLE_MS) return;
@@ -191,9 +280,8 @@ export function drawEventTitle(view: EventView): void {
   const a = Math.min(t / 180, (TITLE_MS - t) / 450, 1);
   if (a <= 0) return;
   const [r, g, b] = view.color;
-  const size = Math.min(58, width * 0.11);
+  const { size, cy } = eventTitleLayout(width, height);
   const grow = 0.9 + 0.1 * clamp01(t / 250);
-  const cy = height * 0.3;
   push();
   textAlign(CENTER, CENTER);
   noStroke();
@@ -202,7 +290,7 @@ export function drawEventTitle(view: EventView): void {
   text(view.title, width / 2 + 3, cy + 3);
   fill(r, g, b, 255 * a);
   text(view.title, width / 2, cy);
-  textSize(Math.min(20, width * 0.045));
+  textSize(Math.min(size * 0.36, 20, width * 0.045));
   fill(0, 0, 0, 150 * a);
   text(view.subtitle, width / 2 + 2, cy + size * 0.8 + 2);
   fill(255, 255, 255, 240 * a);
@@ -233,6 +321,11 @@ const AMBIENCE: Partial<Record<RandomEventId, Ambience>> = {
   chest: { style: 'glint', count: 10, vx: 0.03, vy: -0.6, rate: 0.18, size: 6, color: [255, 215, 110] },
   storm: { style: 'streak', count: 20, vx: -0.25, vy: 1, rate: 1.4, size: 46, color: [200, 190, 255] },
   bounty: { style: 'glint', count: 10, vx: 0.04, vy: 1, rate: 0.28, size: 5, color: [255, 150, 180] },
+  bloodMoon: { style: 'dot', count: 14, vx: 0.02, vy: 1, rate: 0.3, size: 5, color: [220, 40, 60] },
+  giants: { style: 'dot', count: 8, vx: 0, vy: -1, rate: 0.12, size: 7, color: [255, 170, 100] },
+  aegis: { style: 'glint', count: 12, vx: 0.02, vy: -0.8, rate: 0.25, size: 6, color: [255, 230, 140] },
+  poison: { style: 'dot', count: 14, vx: 0.15, vy: -0.6, rate: 0.18, size: 6, color: [150, 230, 90] },
+  manaSurge: { style: 'streak', count: 14, vx: 0, vy: -1, rate: 0.8, size: 40, color: [130, 170, 255] },
 };
 
 /**

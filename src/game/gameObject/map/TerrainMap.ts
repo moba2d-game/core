@@ -18,6 +18,15 @@ import {
   type ResolvedTerrainTuning,
 } from '@/game/config/mapTuning';
 import Obstacle from './Obstacle';
+import { stressTier } from '@/game/render/renderStress';
+import {
+  initialSkinHold,
+  nextSkinHold,
+  paintBushes,
+  paintFloor,
+  paintWalls,
+  paintWater,
+} from '@/game/render/terrainSkin';
 import TerrainField from './TerrainField';
 
 /** The three layers `ActiveMap.terrain` may carry, in the order they are read. */
@@ -511,6 +520,9 @@ export default class TerrainMap {
   private _walls: Obstacle[] = [];
   private _bushes: Obstacle[] = [];
 
+  /** The light/full terrain look, held across frames (`nextSkinHold`). */
+  private skinHold = initialSkinHold();
+
   draw(): void {
     if (this.paintsOwnTerrain) {
       // The pack paints the obstacles; zones are still core's to draw.
@@ -535,20 +547,31 @@ export default class TerrainMap {
       else if (o.type === TerrainType.BUSH) bushes.push(o);
     }
 
-    // Zones go down first, underneath everything. They are ground, not
-    // objects standing on it: a river drawn over a desert should read as a
-    // river, and a bush inside a mist bank must still look like a bush.
+    // The floor, then zones on it. Zones are ground, not objects standing on
+    // it: a river drawn over a desert should read as a river, and a bush
+    // inside a mist bank must still look like a bush.
+    const ctx = drawingContext as CanvasRenderingContext2D;
+    // The same tier every other cut reads: Cao keeps the full skin even on a
+    // late frame, Thấp always gets the light one.
+    const stressed = stressTier(this.game.renderQuality, this.game.renderStressed, this.game.deeplyStressed) > 0;
+    // Held, not followed frame by frame: see `nextSkinHold`. Render clock, not
+    // match time — this is about how the machine is keeping up.
+    const next = nextSkinHold(this.skinHold, stressed, performance.now());
+    this.skinHold = next.state;
+    const light = next.light;
+    // The textured floor is a full-screen fill on top of the clear: free on a
+    // machine keeping up, and the largest single cost on one that is not
+    // (CPU x6: 247 -> 192 frames per 8 s). Under stress the plain clear shows.
+    if (!light) paintFloor(ctx, this.game.camera.getBoundingBox(), this.size);
     this.drawZones();
 
-    // The paint order — water, ripples, bushes, walls — is what it always was;
-    // only the style setting moved out of the loop. Each group keeps its own
-    // push/pop so `rippleEffect.draw()` still runs in the environment it used
-    // to, rather than inheriting whatever colour the water left behind.
-    this.drawObstacleGroup(waters, TerrainType.WATER);
+    // Paint order as it always was — water, ripples, bushes, walls — in the
+    // textured skin (`render/terrainSkin.ts`). A rotated obstacle (none of the
+    // shipped maps has one) keeps the old flat path, which knows how to turn.
+    this.paintGroup(waters, TerrainType.WATER, polys => paintWater(ctx, polys, light));
     this.rippleEffect.draw();
-
-    this.drawObstacleGroup(bushes, TerrainType.BUSH);
-    this.drawObstacleGroup(walls, TerrainType.WALL);
+    this.paintGroup(bushes, TerrainType.BUSH, polys => paintBushes(ctx, polys, light));
+    this.paintGroup(walls, TerrainType.WALL, polys => paintWalls(ctx, polys, light));
     pop();
   }
 
@@ -597,6 +620,19 @@ export default class TerrainMap {
       }
       pop();
     }
+  }
+
+  private readonly _flat: Obstacle[] = [];
+  private readonly _skinned: Obstacle[] = [];
+
+  private paintGroup(group: Obstacle[], type: string, paint: (polys: Obstacle[]) => void): void {
+    const flat = this._flat;
+    const skinned = this._skinned;
+    flat.length = 0;
+    skinned.length = 0;
+    for (const o of group) (o.angle === 0 ? skinned : flat).push(o);
+    paint(skinned);
+    this.drawObstacleGroup(flat, type);
   }
 
   private drawObstacleGroup(group: Obstacle[], type: string): void {

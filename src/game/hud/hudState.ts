@@ -29,6 +29,8 @@ import {
 import { MAX_FEED_VICTIMS, groupKillFeed, type KillFeedGroup } from '@/game/hud/killFeedGroups';
 import AssetManager, { type AssetHandle } from '@/managers/AssetManager';
 import { statLinesFor, type StatLine } from '@/game/hud/itemStatLines';
+import { itemTotalLines, type ItemTotalLine } from '@/game/combat/ItemLedger';
+import { statBonusLines } from '@/game/gameObject/buffs/describeBuff';
 
 function ensureVisibleAsset(asset: Pick<AssetHandle, 'key' | 'status'> | undefined): void {
   if (asset?.key && asset.status === 'idle') {
@@ -225,6 +227,12 @@ export interface ItemSlotDisplay {
   stats: StatLine[];
   /** The passive, the active, the notes. **Not** the stat block above. */
   description: string;
+  /**
+   * What this item has done this match — damage, healing, shield, damage its
+   * resistances stopped, mana — one line each, zeros left out
+   * (`combat/ItemLedger.ts`).
+   */
+  totals: ItemTotalLine[];
   /**
    * '1'..'6', or **''** for an item with no active.
    *
@@ -509,6 +517,7 @@ const EMPTY_SLOT: Omit<ItemSlotDisplay, 'hotKey'> = {
   name: '',
   stats: [],
   description: '',
+  totals: [],
   hasActive: false,
   coolDownPercent: 0,
   coolDownText: 0,
@@ -526,6 +535,30 @@ const EMPTY_SLOT: Omit<ItemSlotDisplay, 'hotKey'> = {
  * icon key would take the whole bar down mid match. `ItemShop` does that
  * lookup once, at purchase, and guards it.
  */
+/**
+ * The item's match totals, then whatever stat it has stacked up on its owner
+ * so far — a `StatAmp` its own passive applied (`Buff.sourceItem`), at the
+ * stack count it stands at now. Stacks are the one stat an item grows over a
+ * match rather than grants flat, which is why they belong under "Trong trận
+ * này" and not in the fixed stat block above.
+ */
+function itemLinesFor(player: any, itemId: string): ItemTotalLine[] {
+  const lines = itemTotalLines(player.tally?.totalsFor?.(itemId));
+  if (!Array.isArray(player.buffs)) return lines;
+  for (const buff of player.buffs) {
+    if (buff?.toRemove || buff.sourceItem?.id !== itemId || !buff.bonuses) continue;
+    if (buff.targetUnit !== player) continue;
+    const stacks = Number(buff.stacks) || 1;
+    for (const line of statBonusLines(buff.bonuses, stacks)) {
+      lines.push({
+        label: stacks > 1 ? `${line.label} (cộng dồn ×${stacks})` : `${line.label} (cộng thêm)`,
+        amount: line.amount,
+      });
+    }
+  }
+  return lines;
+}
+
 function buildItems(player: any): ItemSlotDisplay[] {
   const held = player.items ?? [];
   const slots: ItemSlotDisplay[] = [];
@@ -577,6 +610,7 @@ function buildItems(player: any): ItemSlotDisplay[] {
       // promised a flat 30 as `30 (+60)` — the exact failure the rescaling
       // exists to prevent, pointed the other way.
       description: item.def?.description ?? '',
+      totals: item.def?.id ? itemLinesFor(player, item.def.id) : [],
       hotKey: active ? key : '',
       hasActive: !!active,
       coolDownPercent: coolDown > 0 ? Math.min((currentCooldown / coolDown) * 100, 100) : 0,

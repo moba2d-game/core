@@ -120,6 +120,11 @@ export default class Shield extends Buff {
 
     const absorbed = Math.min(this.amount, damage);
     this.amount -= absorbed;
+    // An item's shield, credited with what it actually stopped — not what it
+    // was worth on paper — to whoever gave it (`combat/ItemLedger.ts`).
+    if (this.sourceItem && absorbed > 0) {
+      (this.sourceUnit?.tally ?? this.targetUnit.tally).addItemEffect(this.sourceItem, 'shielding', absorbed);
+    }
 
     CombatText.show(this.targetUnit, 'shield', absorbed, this.color);
 

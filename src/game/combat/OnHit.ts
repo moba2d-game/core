@@ -1,3 +1,4 @@
+import { beginItemCredit, endItemCredit } from '@/game/combat/DamageAttribution';
 import type AttackableUnit from '@/game/gameObject/attackableUnits/AttackableUnit';
 
 /**
@@ -72,7 +73,20 @@ export function applyOnHitEffects(hit: OnHitEvent): void {
   try {
     for (const buff of [...(hit.attacker.buffs ?? [])]) {
       if (buff.toRemove) continue;
-      buff.onHit(hit);
+      // Counted for the item that armed it (`combat/ItemLedger.ts`), without
+      // moving the hit out from under the swing's attribution — see
+      // `beginItemCredit`. No bracket at all for a buff no item applied.
+      const item = buff.sourceItem ?? null;
+      if (!item) {
+        buff.onHit(hit);
+        continue;
+      }
+      const previous = beginItemCredit(item);
+      try {
+        buff.onHit(hit);
+      } finally {
+        endItemCredit(previous);
+      }
     }
   } finally {
     depth--;

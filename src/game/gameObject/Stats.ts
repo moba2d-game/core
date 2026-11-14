@@ -317,6 +317,10 @@ export default class Stats {
   size = new Stat(DEFAULT_UNIT_SIZE, MAX_UNIT_SIZE);
   height = new Stat(0);
   manaRegen = new Stat(0.1);
+  /** Health regeneration restored on the last `update()`; see `combat/ItemLedger.ts`. */
+  regeneratedHealth = 0;
+  /** Mana regeneration restored on the last `update()`. */
+  regeneratedMana = 0;
   healthRegen = new Stat(0.06);
   visionRadius = new Stat(500);
 
@@ -619,6 +623,8 @@ export default class Stats {
     // stat pipeline at all, and the `stat-resource-modifier` seam enforces that
     // — but the write-back is what turned a merely meaningless modifier into a
     // game-breaking one, so it is fixed here as well.
+    const health0 = this.health.baseValue;
+    const mana0 = this.mana.baseValue;
     this.health.baseValue = constrain(
       this.health.baseValue + this.healthRegen.value * healingMultiplier,
       0,
@@ -629,5 +635,9 @@ export default class Stats {
       0,
       this.maxMana.value
     );
+    // What regeneration actually put back this tick — never negative, never
+    // past the cap — for the per-item totals (`combat/ItemLedger.ts`).
+    this.regeneratedHealth = Math.max(0, this.health.baseValue - health0);
+    this.regeneratedMana = Math.max(0, this.mana.baseValue - mana0);
   }
 }

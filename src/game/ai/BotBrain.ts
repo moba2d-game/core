@@ -62,6 +62,8 @@ export type Posture =
   | 'RECOVER'
   | 'DISENGAGE'
   | 'REACH_AREA'
+  | 'EVADE'
+  | 'COLLECT'
   | 'FIGHT'
   | 'SEARCH'
   | 'ENGAGE'
@@ -69,6 +71,13 @@ export type Posture =
   | 'PUSH'
   | 'FARM'
   | 'ROAM';
+
+/** EVADE: how far past a hazard's edge (plus the body) the bot steps out to. */
+export const HAZARD_CLEARANCE_PX = 60;
+/** COLLECT: a coin further than this is not worth the walk. */
+export const PICKUP_REACH_PX = 800;
+/** During a `fight` event (bounty, frenzy, blood moon…): the retreat threshold is scaled by this. */
+export const FIGHT_EVENT_RETREAT_SCALE = 0.6;
 
 /** How far from an `epic` pit a bot still answers the team's call to it. */
 export const OBJECTIVE_CALL_PX = 2600;
@@ -231,7 +240,7 @@ export const KITE_WINDOW_MS = THINK_INTERVAL_MS + 50;
  * answering — so they are named once rather than re-listed at each of them.
  */
 export const isLeavingPosture = (posture: Posture): boolean =>
-  posture === 'RETREAT' || posture === 'RECOVER' || posture === 'DISENGAGE';
+  posture === 'RETREAT' || posture === 'RECOVER' || posture === 'DISENGAGE' || posture === 'EVADE';
 
 /**
  * A resource as a fraction. **No pool reads as full**, not as empty: a champion
@@ -748,6 +757,11 @@ export class BotBrain {
     // fountain outside the circle is the poison. `retreatPoint()` is also
     // goal-aware, so the two agree about where "safe" is.
     this.goalView = view.goal ?? null;
+    // Standing in a ring that is about to go off (or a poison cloud) is the same
+    // kind of urgent as standing in the guns: step out first, think after.
+    // Below DISENGAGE so the way out of a hazard never leads into a turret first.
+    this.hazardHere = this.hazardUnderfoot(view);
+    if (this.hazardHere) return 'EVADE';
     if (view.goal && this.outsideGoal(view.goal)) return 'REACH_AREA';
 
     if (this.recovering) {
@@ -774,8 +788,15 @@ export class BotBrain {
     }
 
     const outnumbered = view.enemies.length - view.allies.length >= OUTNUMBERED_BY;
+    // An event that pays for fights (bounty, blood moon…) is worth staying in a
+    // little longer for. The outnumbered rule is left alone: a 3v1 is no
+    // better a trade for being worth more.
+    const retreatAt =
+      view.event?.mood === 'fight'
+        ? this.profile.retreatHealthPct * FIGHT_EVENT_RETREAT_SCALE
+        : this.profile.retreatHealthPct;
     if (
-      healthPct < this.profile.retreatHealthPct ||
+      healthPct < retreatAt ||
       (outnumbered && healthPct < OUTNUMBERED_HEALTH_PCT)
     ) {
       this.recovering = true;
@@ -819,6 +840,9 @@ export class BotBrain {
     const memory = this.rememberedTarget(view, nowMs);
     if (memory && !this.guardedByTurret(view, memory.unit)) return 'SEARCH';
     if (this.assistableFocus(view)) return 'ENGAGE';
+    // Nobody to fight: a coin on the ground nearby beats a wave or a camp.
+    this.pickup = this.pickupInReach(view);
+    if (this.pickup) return 'COLLECT';
     // The team's call outranks the lane: a pit boss is worth more than a wave,
     // and every rule that involves an enemy champion has already had its say.
     if (this.objectiveCalled(view)) return 'OBJECTIVE';
@@ -832,6 +856,107 @@ export class BotBrain {
     this.farmCamp = camp;
     if (camp) return 'FARM';
     return 'ROAM';
+  }
+
+  /** The hazard this bot is standing in while EVADE stands; `decidePosture` writes it. */
+  private hazardHere: { x: number; y: number; r: number } | null = null;
+  /** The coin this bot is walking to while COLLECT stands; `decidePosture` writes it. */
+  private pickup: { x: number; y: number } | null = null;
+
+  /** The hazard whose ring this bot's body overlaps, if any (the deepest one). */
+  private hazardUnderfoot(view: TeamView): { x: number; y: number; r: number } | null {
+    const hazards = view.event?.hazards;
+    if (!hazards?.length) return null;
+    const { x, y } = this.owner.position;
+    let worst: { x: number; y: number; r: number } | null = null;
+    let worstDepth = 0;
+    for (const h of hazards) {
+      const depth = h.r + this.bodyRadius - Math.hypot(x - h.x, y - h.y);
+      if (depth > worstDepth) {
+        worstDepth = depth;
+        worst = h;
+      }
+    }
+    return worst;
+  }
+
+  /**
+   * Whether hitting `unit` means standing inside a hazard: it sits in one, and
+   * this bot's reach does not carry from the hazard's edge. A ranged bot may
+   * still shoot into a ring; a melee one waits outside it.
+   */
+  private hazardBlocks(view: TeamView, unit: AttackableUnit): boolean {
+    const hazards = view.event?.hazards;
+    if (!hazards?.length) return false;
+    const reach = this.owner.stats.attackRange.value;
+    for (const h of hazards) {
+      const fromCentre = Math.hypot(unit.position.x - h.x, unit.position.y - h.y);
+      const toSafety = h.r + this.bodyRadius - fromCentre;
+      if (toSafety > 0 && toSafety > reach) return true;
+    }
+    return false;
+  }
+
+  /** Pull a walk that would end inside a hazard back out to the near edge of it. */
+  private outsideHazards(view: TeamView, to: Vec2): Vec2 {
+    const hazards = view.event?.hazards;
+    if (!hazards?.length) return to;
+    let out = to;
+    for (const h of hazards) {
+      const edge = h.r + this.bodyRadius + HAZARD_CLEARANCE_PX / 2;
+      if (Math.hypot(out.x - h.x, out.y - h.y) >= edge) continue;
+      // Toward this bot's side of the ring; dead centre falls back to the walk's own side.
+      let dx = this.owner.position.x - h.x;
+      let dy = this.owner.position.y - h.y;
+      let len = Math.hypot(dx, dy);
+      if (len < 1) {
+        dx = 1;
+        dy = 0;
+        len = 1;
+      }
+      out = { x: h.x + (dx / len) * edge, y: h.y + (dy / len) * edge };
+    }
+    return out;
+  }
+
+  /** The nearest coin within `PICKUP_REACH_PX` that does not sit in a hazard. */
+  private pickupInReach(view: TeamView): { x: number; y: number } | null {
+    const pickups = view.event?.pickups;
+    if (!pickups?.length) return null;
+    const { x, y } = this.owner.position;
+    let best: { x: number; y: number } | null = null;
+    let bestD = PICKUP_REACH_PX;
+    for (const p of pickups) {
+      const d = Math.hypot(p.x - x, p.y - y);
+      if (d >= bestD) continue;
+      if (view.event!.hazards.some(h => Math.hypot(p.x - h.x, p.y - h.y) < h.r + this.bodyRadius)) continue;
+      bestD = d;
+      best = p;
+    }
+    return best;
+  }
+
+  /**
+   * Straight out of `h`, to `HAZARD_CLEARANCE_PX` past its edge. A bot dead
+   * centre goes toward its team (or home), never along a `(0,0)` direction.
+   */
+  private hazardExit(view: TeamView, h: { x: number; y: number; r: number }): Vec2 {
+    let dx = this.owner.position.x - h.x;
+    let dy = this.owner.position.y - h.y;
+    let len = Math.hypot(dx, dy);
+    if (len < 1) {
+      const toward = view.rally ?? this.usualRetreatPoint() ?? { x: h.x + 1, y: h.y };
+      dx = toward.x - h.x;
+      dy = toward.y - h.y;
+      len = Math.hypot(dx, dy);
+      if (len < 1) {
+        dx = 1;
+        dy = 0;
+        len = 1;
+      }
+    }
+    const reach = h.r + this.bodyRadius + HAZARD_CLEARANCE_PX;
+    return { x: h.x + (dx / len) * reach, y: h.y + (dy / len) * reach };
   }
 
   /** The camp this bot is clearing while FARM stands; `decidePosture` writes it. */
@@ -1005,7 +1130,11 @@ export class BotBrain {
   private safely(view: TeamView, target: AttackableUnit | null, to: Vec2): Vec2 {
     // A goal area is a wall as well: no walk here may end outside it, or the
     // REACH_AREA rule and the walk undo each other four times a second.
-    const held = view.goal ? this.withinGoal(view.goal, to) : to;
+    let held = view.goal ? this.withinGoal(view.goal, to) : to;
+    // A target this bot may fight from where it can reach is the attack
+    // controller's walk, and stops at range on its own; everything else stays
+    // out of the rings.
+    if (!target || this.hazardBlocks(view, target)) held = this.outsideHazards(view, held);
     return clampToSafeApproach(
       this.owner.position,
       held,
@@ -1042,6 +1171,10 @@ export class BotBrain {
    * DISENGAGE's job.
    */
   private guardedByTurret(view: TeamView, unit: AttackableUnit): boolean {
+    // An event hazard guards like a turret does, and for the same reason: the
+    // three acquisition paths have to agree, or the attack controller walks the
+    // bot into a meteor ring that the posture just walked it out of.
+    if (this.hazardBlocks(view, unit)) return true;
     const bodyRadius = this.bodyRadius;
     for (const turret of this.forbiddenTurrets(view, unit)) {
       if (insideThreat(turret, this.owner.position, bodyRadius)) continue;
@@ -1723,6 +1856,23 @@ export class BotBrain {
         owner.navigateToWalkable(inside.x, inside.y);
         return;
       }
+      case 'EVADE': {
+        owner.basicAttack?.clear();
+        const h = this.hazardHere;
+        if (!h) return;
+        const out = this.safely(view, null, this.hazardExit(view, h));
+        owner.navigateToWalkable(out.x, out.y);
+        return;
+      }
+      case 'COLLECT': {
+        // A swing already running finishes first, as in FARM.
+        if (owner.basicAttack?.target) return;
+        const coin = this.pickup;
+        if (!coin) return;
+        const to = this.safely(view, null, coin);
+        owner.navigateTo(to.x, to.y);
+        return;
+      }
       case 'DISENGAGE': {
         owner.basicAttack?.clear();
         const tower = this.threateningTurret(view);
@@ -1753,7 +1903,12 @@ export class BotBrain {
         }
         // The attack order owns the walking while it has one; only step in when
         // there is a target but no order, which is the frame before one is given.
-        if (!owner.basicAttack?.target) owner.navigateTo(held.x, held.y);
+        // Held out of any event hazard: a ranged bot shooting into a ring
+        // stands at its edge, rather than walking in and being EVADEd back out.
+        if (!owner.basicAttack?.target) {
+          const walk = this.outsideHazards(view, held);
+          owner.navigateTo(walk.x, walk.y);
+        }
         return;
       }
       case 'SEARCH': {

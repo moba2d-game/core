@@ -14,7 +14,7 @@ import {
   type OwnerMovementSnapshot,
 } from '@/game/spell/runtime/CancelPolicy';
 import type { TargetingRequest } from '@/game/spell/targeting/TargetResolver';
-import { beginAttribution, endAttribution } from '@/game/combat/DamageAttribution';
+import { beginAttribution, endAttribution, type ItemDamageSource } from '@/game/combat/DamageAttribution';
 import { isNetClient } from '@/game/net/netRole';
 import { hasteCooldownMultiplier } from '@/game/gameObject/Stats';
 import type {
@@ -98,6 +98,9 @@ export default class Spell {
    * must not draw from both stats at once.
    */
   damageScalesWithAbilityPower = true;
+
+  /** Set by `economy/ItemShop` on an item's own spells; see `DamageAttributable.sourceItem`. */
+  sourceItem: ItemDamageSource | null = null;
 
   /**
    * What this ability *does*, for the bot brain — see `src/game/ai/SpellRole.ts`.

@@ -110,6 +110,47 @@ export interface DamageAttributable {
    * running already knows.
    */
   readonly revealsStealth?: boolean;
+  /**
+   * The held item this hit belongs to, for the per-item damage count
+   * (`MatchTally.itemDamage`). Stamped by `economy/ItemShop` on an item's own
+   * spells and inherited by whatever runs inside them — a buff through its
+   * field initialiser, a spell object or a pet through `attributedTo` — so a
+   * burn an item's passive applied still counts for that item seconds later.
+   * Nothing else sets it: an item's *stats* make every swing bigger, and no
+   * honest split of that swing between the champion and the item exists.
+   */
+  readonly sourceItem?: ItemDamageSource | null;
+}
+
+/** Which item, by its qualified id, with the name a panel prints. */
+export interface ItemDamageSource {
+  readonly id: string;
+  readonly name: string;
+}
+
+let itemOverride: ItemDamageSource | null = null;
+
+/**
+ * Credits an item without changing the attribution. For the one bracket where
+ * the attribution is deliberately *not* the item: an on-hit effect runs inside
+ * the swing's `BASIC_ATTACK_ATTRIBUTION` (`combat/OnHit.ts`), and moving it
+ * under the buff would change what ability power amplifies — an on-hit an
+ * *ability* applied would start scaling. This changes only who is counted.
+ * Save and restore, like `beginAttribution`.
+ */
+export function beginItemCredit(item: ItemDamageSource | null): ItemDamageSource | null {
+  const previous = itemOverride;
+  itemOverride = item;
+  return previous;
+}
+
+export function endItemCredit(previous: ItemDamageSource | null): void {
+  itemOverride = previous;
+}
+
+/** The item behind whatever is running right now, if any. */
+export function currentItemSource(): ItemDamageSource | null {
+  return itemOverride ?? current?.sourceItem ?? null;
 }
 
 let current: DamageAttributable | null = null;
@@ -190,4 +231,5 @@ export function currentAttributionName(): string | undefined {
 /** Test-only: drops any attribution left standing by a thrown update. */
 export function resetAttributionForTests(): void {
   current = null;
+  itemOverride = null;
 }

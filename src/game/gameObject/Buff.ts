@@ -6,7 +6,11 @@ import type { GameObjectRuntimeContext } from './GameObject';
 import type AttackableUnit from './attackableUnits/AttackableUnit';
 import type { OnHitEvent } from '@/game/combat/OnHit';
 import type Spell from './Spell';
-import { currentAttribution } from '@/game/combat/DamageAttribution';
+import {
+  currentAttribution,
+  currentItemSource,
+  type ItemDamageSource,
+} from '@/game/combat/DamageAttribution';
 
 export type BuffConstructorArgs = [
   duration: number,
@@ -70,6 +74,9 @@ export default class Buff {
    */
   readonly damageScalesWithAbilityPower: boolean =
     currentAttribution()?.damageScalesWithAbilityPower === true;
+
+  /** The item that applied this, read the same way and for the same reason as the line above. */
+  readonly sourceItem: ItemDamageSource | null = currentItemSource();
 
   /**
    * Whether a hit this buff deals gives a hidden unit away — see

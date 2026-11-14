@@ -17,7 +17,13 @@ import {
 } from '@/game/render/hitFeedback';
 import AoePulse from '@/game/gameObject/spellObjects/AoePulse';
 import { feelHaptic, type FeedbackKind } from '@/game/input/haptics';
-import { vampFraction } from '@/game/combat/Vamp';
+import { TYPED_VAMP_STAT, vampFraction } from '@/game/combat/Vamp';
+import { creditStatShare } from '@/game/combat/ItemLedger';
+
+const RESIST_ARMOR = ['armor'] as const;
+const RESIST_MAGIC = ['magicResist'] as const;
+const REGEN_HEALTH = ['healthRegen'] as const;
+const REGEN_MANA = ['manaRegen'] as const;
 import { healingMultiplier } from '@/game/combat/Healing';
 import { resolveEconomy } from '@/game/config/mapTuning';
 import CombatText, {
@@ -37,6 +43,7 @@ import {
   attributionRevealsStealth,
   beginAttribution,
   currentAttributionName,
+  currentItemSource,
   endAttribution,
 } from '@/game/combat/DamageAttribution';
 import { amplifiedAbilityDamage, type AmplificationSource } from '@/game/combat/Amplification';
@@ -540,7 +547,14 @@ export default class AttackableUnit extends GameObject {
     // The one caller that passes the wound down. Read *after* `updateBuffs`, so
     // a cut that expired this frame has already been swept and is not still
     // taxing a regeneration tick it no longer covers.
+    // Regeneration is the second door health comes in by (`combat/Healing.ts`):
+    // `Stats.update` reports what it put back, split here by each item's share
+    // of the regen stat. A unit with no items skips it.
     this.stats.update(healingMultiplier(this));
+    if (!this.isDead && (this as { items?: readonly unknown[] }).items !== undefined) {
+      creditStatShare(this, REGEN_HEALTH, this.stats.regeneratedHealth, 'healing');
+      creditStatShare(this, REGEN_MANA, this.stats.regeneratedMana, 'mana');
+    }
 
     // The route picks this frame's destination before the step is taken, so a
     // unit rounding a corner turns on the frame it arrives rather than the one
@@ -942,8 +956,8 @@ export default class AttackableUnit extends GameObject {
    * both packs already passes the caster, which is why this needed no pack
    * edit at all.
    */
-  takeHeal(heal: number, healer?: HealSource): void {
-    if (this.isDead) return;
+  takeHeal(heal: number, healer?: HealSource): number {
+    if (this.isDead) return 0;
 
     if (abilityPowerScales()) heal = amplifiedAbilityDamage(heal, healer as AmplificationSource);
 
@@ -956,7 +970,7 @@ export default class AttackableUnit extends GameObject {
 
     // whole points, for the same reason takeDamage rounds
     heal = Math.round(heal);
-    if (heal <= 0) return;
+    if (heal <= 0) return 0;
 
     // What lands is bounded by the room left in the pool, and the floating
     // number reports THAT — the landed heal, exactly as takeDamage's number is
@@ -967,7 +981,7 @@ export default class AttackableUnit extends GameObject {
     // (and prints the whole point it rounds to) rather than being dropped.
     const room = Math.ceil(this.stats.maxHealth.value - this.stats.health.baseValue);
     const landed = Math.min(heal, room);
-    if (landed <= 0) return;
+    if (landed <= 0) return 0;
 
     CombatText.show(this, 'heal', landed, [0, 255, 0]);
 
@@ -976,6 +990,14 @@ export default class AttackableUnit extends GameObject {
       0,
       this.stats.maxHealth.value
     );
+
+    // An item's own heal, credited to whoever cast it (`combat/ItemLedger.ts`).
+    const item = currentItemSource();
+    if (item) {
+      const by = (healer as { tally?: MatchTally } | undefined)?.tally ?? this.tally;
+      by.addItemEffect(item, 'healing', landed);
+    }
+    return landed;
   }
 
   /**
@@ -1113,7 +1135,18 @@ export default class AttackableUnit extends GameObject {
     // `attacker` is here for penetration only — the share of this unit's
     // resistance the hitter ignores (`combat/Mitigation.ts`). Everything else
     // about the attacker was already settled before the hit arrived.
+    const beforeResistance = damage;
     damage = Math.round(effectiveDamage(damage, type, this, attacker));
+    // What armour or magic resist stopped, split between the items that sold
+    // it (`combat/ItemLedger.ts`). True damage has nothing to split.
+    if (type !== 'TRUE' && beforeResistance > damage) {
+      creditStatShare(
+        this,
+        type === 'PHYSICAL' ? RESIST_ARMOR : RESIST_MAGIC,
+        beforeResistance - Math.max(0, damage),
+        'mitigated'
+      );
+    }
     if (damage <= 0) return;
 
     // What was aimed at this unit, before anything ate it. Retaliation is
@@ -1200,6 +1233,8 @@ export default class AttackableUnit extends GameObject {
     this.tally.damageTaken += landed;
     if (attacker && attacker !== this) {
       attacker.tally.damageDealt += landed;
+      const item = currentItemSource();
+      if (item) attacker.tally.addItemEffect(item, 'damage', landed);
       // The same hit on the dealer's own ledger, so the recap can report what
       // they dealt over the window it already reports what they took over.
       // Deliberately *not* also a per-type running total on `MatchTally`: two
@@ -1251,7 +1286,8 @@ export default class AttackableUnit extends GameObject {
         // not a second ability effect; it is a fraction of the first one.
         const previous = beginAttribution(null);
         try {
-          attacker.takeHeal(damage * vamp, attacker);
+          const healed = attacker.takeHeal(damage * vamp, attacker);
+          creditStatShare(attacker, ['omnivamp', TYPED_VAMP_STAT[type]], healed, 'healing');
         } finally {
           endAttribution(previous);
         }

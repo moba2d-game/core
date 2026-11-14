@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import AssetManager, { FORCED_RESTORE_HIDDEN_MS } from '../../src/managers/AssetManager';
+import AssetManager, {
+  FORCED_RESTORE_HIDDEN_MS,
+  PROBE_SIZE,
+  backingStoreProbe,
+  setProbeCanvasFactory,
+} from '../../src/managers/AssetManager';
 import { assetManifest, type AssetKey } from '../../src/generated/assetManifest';
 
 /**
@@ -48,8 +53,19 @@ const freshKey = (): AssetKey => imageKeys[nextKey++];
 const realLost = AssetManager.backingStoresLost;
 const realArm = AssetManager.armBackingStoreProbe;
 
+/** A canvas as far as the probe can tell: events, a size, and a context that can be lost. */
+class FakeCanvas extends EventTarget {
+  width = 0;
+  height = 0;
+  lost = false;
+  getContext() {
+    return { fillStyle: '', fillRect: () => undefined, isContextLost: () => this.lost };
+  }
+}
+
 describe('recovering images the browser threw away', () => {
   beforeEach(() => {
+    setProbeCanvasFactory(() => new FakeCanvas() as unknown as HTMLCanvasElement);
     AssetManager.armBackingStoreProbe = () => undefined;
   });
 
@@ -75,6 +91,42 @@ describe('recovering images the browser threw away', () => {
     await AssetManager.ensure(key);
     return { key, image };
   };
+
+  // "Back ra app khác xong quay lại game là nó đen hết luôn": a short hop, the
+  // 1x1 probe kept its pixel (Chrome never put it on the GPU), so nothing was
+  // restored. The browser's own events are the signal now.
+  it('hears the browser say the context was lost, on a short hop too', async () => {
+    AssetManager.armBackingStoreProbe = realArm;
+    AssetManager.armBackingStoreProbe();
+    expect(AssetManager.backingStoresLost()).toBe(false);
+    backingStoreProbe()!.dispatchEvent(new Event('contextlost'));
+    expect(AssetManager.backingStoresLost()).toBe(true);
+    const { image } = await loaded();
+    await AssetManager.recoverIfLost(() => Promise.resolve('fresh' as never), 0);
+    expect(image.painted).toContain('fresh');
+    // The recovery re-arms, so the next hop starts clean.
+    expect(AssetManager.backingStoresLost()).toBe(false);
+  });
+
+  it('repaints on contextrestored by itself, without waiting for a resume', async () => {
+    AssetManager.armBackingStoreProbe = realArm;
+    AssetManager.armBackingStoreProbe();
+    const { image } = await loaded();
+    const epoch = AssetManager.purgeEpoch;
+    backingStoreProbe()!.dispatchEvent(new Event('contextrestored'));
+    await new Promise(resolve => setTimeout(resolve, 0));
+    await new Promise(resolve => setTimeout(resolve, 0));
+    // A completed restore — the epoch moves only at the end of `restoreImages`.
+    // (Its default decoder needs a browser `Image`, so nothing is painted here.)
+    expect(AssetManager.purgeEpoch).toBe(epoch + 1);
+    void image;
+  });
+
+  it('is big enough for Chrome to put on the GPU, where the purge happens', () => {
+    const probe = backingStoreProbe()!;
+    expect(probe.width * probe.height).toBeGreaterThanOrEqual(PROBE_SIZE * PROBE_SIZE);
+    expect(PROBE_SIZE).toBeGreaterThanOrEqual(256);
+  });
 
   it('does nothing at all while the pixels are still there', async () => {
     const { image } = await loaded();

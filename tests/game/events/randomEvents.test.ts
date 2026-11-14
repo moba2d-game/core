@@ -9,6 +9,7 @@ import {
   HealingSpring,
   LightningStrike,
   TreasureChest,
+  ToxicCloud,
   GoldCoin,
   MeteorStrike,
 } from '../../../src/game/events/eventObjects';
@@ -20,6 +21,17 @@ import {
   EVENT_MIN_QUIET_MS,
   EVENT_WARNING_MS,
   BOUNTY_BONUS_GOLD,
+  AEGIS_PULSE_MS,
+  AEGIS_SHIELD_FRACTION,
+  BLOOD_MOON_OMNIVAMP,
+  GIANTS_ATTACK_DAMAGE,
+  GIANTS_SIZE,
+  MANA_SURGE_ABILITY_HASTE,
+  MANA_SURGE_FRACTION_PER_SEC,
+  POISON_CLOUD_COUNT,
+  POISON_DAMAGE,
+  POISON_PULSE_MS,
+  POISON_RADIUS,
   CHEST_CAPTURE_MS,
   CHEST_GOLD,
   CHEST_RADIUS,
@@ -86,15 +98,15 @@ describe('the schedule', () => {
     }
   });
 
-  it('has ten events, each 8-10 s, with unique ids and Vietnamese names', () => {
-    expect(RANDOM_EVENTS.length).toBe(10);
+  it('has fifteen events, each 8-10 s, with unique ids and Vietnamese names', () => {
+    expect(RANDOM_EVENTS.length).toBe(15);
     expect(new Set(RANDOM_EVENTS.map(e => e.id)).size).toBe(RANDOM_EVENTS.length);
     for (const e of RANDOM_EVENTS) {
       expect(e.durationMs).toBeGreaterThanOrEqual(EVENT_MIN_DURATION_MS);
       expect(e.durationMs).toBeLessThanOrEqual(EVENT_MAX_DURATION_MS);
     }
     expect(RANDOM_EVENTS.map(e => e.name)).toEqual(
-      expect.arrayContaining(['Mưa Vàng', 'Thiên Thạch', 'Gió Lốc', 'Hồi Sinh Nhanh', 'Sương Mù', 'Cuồng Nộ', 'Suối Hồi Sinh', 'Rương Báu', 'Bão Sét', 'Truy Nã'])
+      expect.arrayContaining(['Mưa Vàng', 'Thiên Thạch', 'Gió Lốc', 'Hồi Sinh Nhanh', 'Sương Mù', 'Cuồng Nộ', 'Suối Hồi Sinh', 'Rương Báu', 'Bão Sét', 'Truy Nã', 'Huyết Nguyệt', 'Khổng Lồ', 'Khiên Thần', 'Mây Độc', 'Tràn Linh Lực'])
     );
   });
 
@@ -464,6 +476,124 @@ describe('events at work', () => {
     expect(spyOut).not.toHaveBeenCalled();
     fresh.update();
     expect(spyIn).toHaveBeenCalledTimes(1);
+  });
+
+  it('Huyết Nguyệt gives everyone omnivamp, once', () => {
+    const base = champs[0].stats.omnivamp.value;
+    const { d, start } = directorFor('bloodMoon');
+    clock = start + 100;
+    d.tick();
+    d.tick();
+    champs[0].updateBuffs();
+    expect(champs[0].stats.omnivamp.value).toBeCloseTo(base + BLOOD_MOON_OMNIVAMP, 5);
+    expect(champs[0].buffs.filter(b => b.name === 'Huyết Nguyệt').length).toBe(1);
+    expect(d.mood).toBe('fight');
+  });
+
+  it('Khổng Lồ makes bodies bigger and swings harder', () => {
+    const size = champs[1].stats.size.value;
+    const ad = champs[1].stats.attackDamage.value;
+    const { d, start } = directorFor('giants');
+    clock = start + 100;
+    d.tick();
+    champs[1].updateBuffs();
+    expect(champs[1].stats.size.value).toBeCloseTo(size * (1 + GIANTS_SIZE), 3);
+    expect(champs[1].stats.attackDamage.value).toBeCloseTo(ad * (1 + GIANTS_ATTACK_DAMAGE), 3);
+  });
+
+  it('Khiên Thần re-shields every pulse, one live shield each, sized from max health', () => {
+    const { d, start } = directorFor('aegis');
+    clock = start;
+    d.tick();
+    const shields = () => champs[0].buffs.filter(b => b.name === 'Khiên Thần' && !b.toRemove) as any[];
+    expect(shields().length).toBe(1);
+    expect(shields()[0].amount).toBeCloseTo(1_000 * AEGIS_SHIELD_FRACTION, 0);
+    shields()[0].amount = 5;
+    clock = start + AEGIS_PULSE_MS - 1;
+    d.tick();
+    expect(shields()[0].amount).toBe(5);
+    clock = start + AEGIS_PULSE_MS;
+    d.tick();
+    champs[0].updateBuffs();
+    expect(shields().length).toBe(1);
+    expect(shields()[0].amount).toBeCloseTo(1_000 * AEGIS_SHIELD_FRACTION, 0);
+  });
+
+  it('Mây Độc spawns separated clouds that bite only inside, drift toward a champion, and are listed as hazards', () => {
+    pts = [
+      { x: 200, y: 200 },
+      { x: 1_200, y: 200 },
+      { x: 200, y: 1_200 },
+      { x: 1_200, y: 1_200 },
+      { x: 2_200, y: 2_200 },
+    ];
+    const { d, start } = directorFor('poison');
+    const clouds = ofType(ToxicCloud)() as ToxicCloud[];
+    expect(clouds.length).toBe(POISON_CLOUD_COUNT);
+    expect(d.hazards().length).toBe(POISON_CLOUD_COUNT);
+    expect(d.hazards()[0].r).toBe(POISON_RADIUS);
+    const cloud = clouds.find(c => c.position.x === 200 && c.position.y === 200)!;
+    const inside = vi.spyOn(champs[0], 'takeDamage');
+    const outside = vi.spyOn(champs[1], 'takeDamage');
+    // Before the first bite nothing happens; after it, exactly one per pulse.
+    for (let t = start; t < start + 1_000 + POISON_PULSE_MS * 2; t += 50) {
+      clock = t;
+      cloud.update();
+    }
+    expect(inside).toHaveBeenCalledWith(POISON_DAMAGE, undefined, 'MAGIC', 'Mây Độc');
+    expect(inside.mock.calls.length).toBe(2);
+    expect(outside).not.toHaveBeenCalled();
+    // A far cloud creeps toward the nearest champion.
+    const far = clouds.find(c => c !== cloud)!;
+    const gap = () => Math.hypot(far.position.x - 200, far.position.y - 200);
+    const before = gap();
+    const from = clock;
+    for (let t = from; t < from + 2_000; t += 50) {
+      clock = t;
+      far.update();
+    }
+    expect(gap()).toBeLessThan(before - 20);
+    expect(d.mood).toBe('normal');
+  });
+
+  it('Tràn Linh Lực refills mana fast and grants ability haste', () => {
+    const c = champs[0];
+    c.stats.maxMana.baseValue = 200;
+    c.stats.mana.baseValue = 0;
+    const haste = c.stats.abilityHaste.value;
+    const { d, start } = directorFor('manaSurge');
+    for (let t = start; t <= start + 1_000; t += 50) {
+      clock = t;
+      d.tick();
+    }
+    c.updateBuffs();
+    expect(c.stats.abilityHaste.value).toBe(haste + MANA_SURGE_ABILITY_HASTE);
+    // ~1 s of surge: half the pool, give or take one pulse.
+    expect(c.stats.mana.value).toBeGreaterThanOrEqual(200 * MANA_SURGE_FRACTION_PER_SEC);
+    expect(c.stats.mana.value).toBeLessThanOrEqual(200 * MANA_SURGE_FRACTION_PER_SEC + 30);
+  });
+
+  it('meteor and storm rings count as hazards until they land, gold rain lists live coins', () => {
+    {
+      const { d, start } = directorFor('meteors');
+      clock = start + 100;
+      d.tick();
+      const m = spawned.find(o => o instanceof MeteorStrike) as MeteorStrike;
+      expect(d.hazards()).toContainEqual({ x: m.position.x, y: m.position.y, r: METEOR_RADIUS });
+      clock = m.impactAtMs;
+      expect(d.hazards().some(h => h.x === m.position.x && h.y === m.position.y)).toBe(false);
+    }
+    spawned = [];
+    {
+      const { d, start } = directorFor('goldRain');
+      clock = start + 5_000;
+      d.tick();
+      const coins = spawned.filter(o => o instanceof GoldCoin) as GoldCoin[];
+      expect(d.pickups().length).toBe(coins.length);
+      coins[0].toRemove = true;
+      expect(d.pickups().length).toBe(coins.length - 1);
+      expect(d.hazards().length).toBe(0);
+    }
   });
 
   it('Truy Nã pays a bonus to the champion who gets a kill, only during the event', () => {

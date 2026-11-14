@@ -177,6 +177,12 @@ const onBackdrop = (event: Event | TouchLike): void => {
           <span class="amount">{{ line.amount }}</span> {{ line.label }}
         </li>
       </ul>
+      <ul v-if="detail.item.totals?.length" class="item-totals">
+        <li class="item-totals-title">Trong trận này</li>
+        <li v-for="line of detail.item.totals" :key="line.label">
+          <span class="amount">{{ line.amount }}</span> {{ line.label }}
+        </li>
+      </ul>
       <p v-if="detail.item.description" class="body" v-html="detail.item.description"></p>
     </div>
   </div>

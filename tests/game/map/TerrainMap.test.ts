@@ -128,7 +128,19 @@ describe('TerrainMap.draw and MapSummary.paintsOwnTerrain', () => {
       vi.stubGlobal(name, vi.fn());
     }
     vi.stubGlobal('vertex', vi.fn(() => vertices++));
-    const game = { camera: { getBoundingBox: () => new Rectangle({ x: 0, y: 0, w: 6_400, h: 6_400 }) } };
+    // The skin (`render/terrainSkin.ts`) traces straight onto the 2D context,
+    // so a vertex is a `moveTo`/`lineTo` there — counted on the base pass only
+    // (a light frame, so no shadow or rim pass traces the same polygon again).
+    const noop = () => {};
+    const point = () => vertices++;
+    vi.stubGlobal('drawingContext', {
+      save: noop, restore: noop, beginPath: noop, closePath: noop, fill: noop, stroke: noop,
+      fillRect: noop, createPattern: () => null, moveTo: point, lineTo: point,
+    });
+    const game = {
+      renderStressed: true,
+      camera: { getBoundingBox: () => new Rectangle({ x: 0, y: 0, w: 6_400, h: 6_400 }) },
+    };
     const terrainMap = new TerrainMap(game, { ...activeMap(6_400), paintsOwnTerrain });
     terrainMap.rippleEffect = { draw: vi.fn() };
     terrainMap.draw();
