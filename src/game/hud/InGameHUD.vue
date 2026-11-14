@@ -38,9 +38,9 @@
  * mounted, so it lives in local state and is pushed in through `setState`,
  * exposed below for the lifecycle wrapper to call.
  */
-import { markRaw, onUnmounted, provide, ref, shallowRef, watch } from 'vue';
+import { markRaw, onUnmounted, provide, ref, shallowRef, toRaw, watch } from 'vue';
 import type { HudInteractions } from './hudInteractions';
-import type { HudState } from './hudState';
+import { sameFeed, type HudState } from './hudState';
 import { vTap } from './tapGuard';
 import DeathRecapPanel from './DeathRecapPanel.vue';
 import SpectateBar from './SpectateBar.vue';
@@ -141,6 +141,12 @@ defineExpose({
     // exist at once — and a hover pinned to a buff that ended has to let go
     // here or nowhere. See `HudInteractions.releaseEndedHover`.
     props.hud.releaseEndedHover(state.value?.buffs ?? [], next?.buffs ?? []);
+    // The same feed object when nothing on it changed, so `KillFeed` is not
+    // re-rendered: its `<transition-group>` measures every row and forces a
+    // reflow on each render, which was ~40% of a weak phone's CPU in a fight.
+    if (next && state.value && sameFeed(state.value.feed, next.feed)) {
+      next.feed = toRaw(state.value.feed);
+    }
     state.value = next;
   },
 });

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { computeHudState } from '../../../src/game/hud/hudState';
+import { FEED_FADE_MS, computeHudState, sameFeed } from '../../../src/game/hud/hudState';
+import { BANNER_TTL_MS, FEED_TTL_MS } from '../../../src/game/combat/Announcer';
 import MatchAnnouncer from '../../../src/game/combat/Announcer';
 import { MAX_FEED_VICTIMS } from '../../../src/game/hud/killFeedGroups';
 import EventManager from '../../../src/managers/EventManager';
@@ -42,7 +43,7 @@ const fakeEnemy = (name: string) =>
 describe('HudState.feed', () => {
   it('is empty for a context with no announcer', () => {
     const state = computeHudState({ player: fakePlayer('BLUE') } as any)!;
-    expect(state.feed).toEqual({ rows: [], banner: null });
+    expect(state.feed).toEqual({ rows: [], banner: null, nowMs: 0 });
   });
 
   it("retells the feed from the player's side", () => {
@@ -66,7 +67,7 @@ describe('HudState.feed', () => {
     expect(mine.victims[0].side).toBe('enemy');
     expect(mine.victims[0].avatar).toBe('Bot.png');
     expect(mine.mine).toBe(true);
-    expect(mine.fade).toBe(1);
+    expect(mine.expiresAtMs).toBe(10_000 + FEED_TTL_MS);
     expect(mine.tags).toEqual([{ kind: 'first', label: 'First Blood' }]);
     expect(mine.accent).toBe('first');
     expect(death.tags).toEqual([]);
@@ -299,6 +300,46 @@ describe('HudState.feed', () => {
     const state = computeHudState({ player, announcer, matchTimeMs: now } as any)!;
     expect(state.feed.rows).toHaveLength(1);
     expect(state.feed.rows[0].victims.map(v => v.name)).toEqual(['Zed', 'Ahri']);
-    expect(state.feed.rows[0].fade).toBe(1);
+    expect(state.feed.rows[0].expiresAtMs).toBe(now + FEED_TTL_MS);
+  });
+
+  // On a Helio P35 phone the feed cost ~40% of the CPU in a fight (10 -> 16 fps
+  // with it frozen): a fade written per HUD tick re-rendered its
+  // `<transition-group>`, which measures every row and forces a reflow each time.
+  it('is the same feed from tick to tick until something happens, fading included', () => {
+    const events = new EventManager();
+    let now = 1_000;
+    const announcer = new MatchAnnouncer(events, () => now);
+    announcer.attach();
+    const player = fakePlayer('BLUE');
+    events.emit(EventType.ON_DIE, { unit: fakeEnemy('Ahri'), killer: player, credit: 'champion' });
+    const at = (t: number) => {
+      now = t; // one clock, as in a match
+      return computeHudState({ player, announcer, matchTimeMs: t } as any)!.feed;
+    };
+
+    // Past the banner (a real change), still before the fade.
+    const fresh = at(1_000 + BANNER_TTL_MS + 100);
+    expect(fresh.banner).toBeNull();
+    // Deep into the fade: nothing a render reads may have moved.
+    const fading = at(1_000 + FEED_TTL_MS - FEED_FADE_MS / 2);
+    expect(fading.rows).toHaveLength(1);
+    expect(sameFeed(fresh, fading)).toBe(true);
+
+    now = 1_000 + FEED_TTL_MS - FEED_FADE_MS / 2;
+    events.emit(EventType.ON_DIE, { unit: fakeEnemy('Zed'), killer: player, credit: 'champion' });
+    expect(sameFeed(fading, at(now + 50))).toBe(false);
+  });
+
+  it('tells the view when the fade starts, so CSS can run it', () => {
+    const events = new EventManager();
+    const announcer = new MatchAnnouncer(events, () => 2_000);
+    announcer.attach();
+    const player = fakePlayer('BLUE');
+    events.emit(EventType.ON_DIE, { unit: fakeEnemy('Ahri'), killer: player, credit: 'champion' });
+    const feed = computeHudState({ player, announcer, matchTimeMs: 2_400 } as any)!.feed;
+    expect(feed.nowMs).toBe(2_400);
+    // The view starts the fade at expiresAtMs - FEED_FADE_MS, measured from nowMs.
+    expect(feed.rows[0].expiresAtMs - FEED_FADE_MS - feed.nowMs).toBe(FEED_TTL_MS - FEED_FADE_MS - 400);
   });
 });

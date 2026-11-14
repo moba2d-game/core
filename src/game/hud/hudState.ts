@@ -299,8 +299,13 @@ export interface FeedRowDisplay {
    * kill has none.
    */
   accent: AnnouncementKind | null;
-  /** 1 fresh, falling to 0 over the row's last moment on screen. */
-  fade: number;
+  /**
+   * Match time the row leaves at. Its last `FEED_FADE_MS` thin out in CSS
+   * (`KillFeed.vue`), not here: a fade written per HUD tick re-rendered the
+   * feed's `<transition-group>`, which measures every row and forces a reflow
+   * each time — ~40% of a Helio P35's CPU in a fight. Stable while the row is.
+   */
+  expiresAtMs: number;
   /** The player killed or died here. */
   mine: boolean;
 }
@@ -321,6 +326,23 @@ export interface BannerDisplay {
 export interface FeedDisplay {
   rows: FeedRowDisplay[];
   banner: BannerDisplay | null;
+  /**
+   * The match time this feed was read at — the one field that moves every
+   * tick, so `sameFeed` leaves it out. The view needs it only to place a new
+   * row's fade.
+   */
+  nowMs: number;
+}
+
+/**
+ * Whether two feeds draw the same thing. `InGameHUD.vue` keeps the old object
+ * when they do, so the feed is not re-rendered 20 times a second for nothing.
+ */
+export function sameFeed(a: FeedDisplay, b: FeedDisplay): boolean {
+  return (
+    JSON.stringify(a.banner) === JSON.stringify(b.banner) &&
+    JSON.stringify(a.rows) === JSON.stringify(b.rows)
+  );
 }
 
 /** One champion on the quick scoreboard. */
@@ -816,7 +838,7 @@ function recapIconsFor(player: any, recap: unknown): Map<string, string> {
 }
 
 /** A row's last moment: it thins out over this long before it goes. */
-const FEED_FADE_MS = 1_500;
+export const FEED_FADE_MS = 1_500;
 
 /** m:ss, hours folded into the minutes: a match here has no end to count down to. */
 export function formatClock(ms: number): string {
@@ -891,7 +913,7 @@ function buildScoreboard(game: any, player: any): ScoreboardDisplay {
  */
 function buildFeed(game: any, player: any): FeedDisplay {
   const announcer = game?.announcer as MatchAnnouncer | undefined;
-  if (!announcer) return { rows: [], banner: null };
+  if (!announcer) return { rows: [], banner: null, nowMs: 0 };
   const now: number = game?.matchTimeMs ?? 0;
   const sideOf = (side: AnnouncementSide | null): FeedSideDisplay | null =>
     side && {
@@ -930,7 +952,6 @@ function buildFeed(game: any, player: any): FeedDisplay {
       // Only the faces that get drawn: a run past the cap must not fetch art
       // for portraits it has already decided to count instead.
       for (const member of shown) ensureVisibleAsset(member.victimUnit?.avatar);
-      const left = FEED_TTL_MS - (now - group.latestAtMs);
       return {
         seq: group.seq,
         killer: sideOf(group.killer),
@@ -941,14 +962,14 @@ function buildFeed(game: any, player: any): FeedDisplay {
         objective: group.victims[0].objective,
         tags: group.tags,
         accent: group.accent,
-        fade: left >= FEED_FADE_MS ? 1 : Math.max(0, left / FEED_FADE_MS),
+        expiresAtMs: group.latestAtMs + FEED_TTL_MS,
         mine:
           group.killerUnit === player || group.victims.some(member => member.victimUnit === player),
       };
     })
     .reverse();
   const top = announcer.banner(now, player);
-  return { rows, banner: top && buildBanner(top, groups, player) };
+  return { rows, banner: top && buildBanner(top, groups, player), nowMs: now };
 }
 
 /**

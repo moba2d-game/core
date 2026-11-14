@@ -3105,11 +3105,15 @@ button.practice-roster-item {
 
 .kill-feed-row {
   --feed-edge: #ffffff26;
-  /* The fade arrives as a custom property rather than as `style="opacity"`,
-     because an inline declaration outranks every class in this file: the
-     `.kill-feed-leave-to` rule below was dead, and a row evicted while still
-     at full opacity left an *opaque* ghost behind instead of a fading one. */
-  opacity: var(--row-fade, 1);
+  /* The fade is a CSS animation, named and delayed per row by `KillFeed.vue`
+     (`fadeOf`) — never a value written per HUD tick, which re-rendered the
+     whole feed 20 times a second. `forwards` only, not `both`: while the row
+     waits out its delay the animation sets nothing, so
+     `.kill-feed-leave-to` can still fade a row evicted early. Never
+     `style="opacity"` either: an inline declaration outranks every class. */
+  animation-duration: 1.5s;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
   /* Pinned, so the reserved height above is exact. Every row is one nowrap
      line, so there is nothing here a fixed height can clip. */
   box-sizing: border-box;
@@ -4176,4 +4180,14 @@ body.touch-ui .scoreboard-item {
 
 body.touch-ui .scoreboard-head {
   margin-bottom: 4px;
+}
+
+/* Two identical fades, so a run that grows restarts its fade by switching name. */
+@keyframes kill-feed-fade-0 {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+@keyframes kill-feed-fade-1 {
+  from { opacity: 1; }
+  to { opacity: 0; }
 }

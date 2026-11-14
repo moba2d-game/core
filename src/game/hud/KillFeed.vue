@@ -50,7 +50,7 @@
  *  - **The banner is one element, not a queue of them.** See below.
  */
 import { computed, ref, watch } from 'vue';
-import type { FeedDisplay } from './hudState';
+import { FEED_FADE_MS, type FeedDisplay, type FeedRowDisplay } from './hudState';
 import type { AnnouncementKind, ObjectiveKind } from '@/game/combat/Announcer';
 
 const props = defineProps<{ feed: FeedDisplay; touch?: boolean }>();
@@ -115,6 +115,35 @@ const unpin = (el: Element): void => {
   row.style.width = '';
 };
 
+/**
+ * Each row's fade, as a CSS animation placed once — when the row first shows,
+ * or when a new kill extends its run and so moves `expiresAtMs`.
+ *
+ * Computed once and then handed back unchanged: a style that moved on every
+ * render would re-time a running animation (its delay is measured from when
+ * the animation started, not from now), and a feed re-rendered every HUD tick
+ * is the cost this replaced. The two keyframe names alternate so an extended
+ * run restarts its fade instead of keeping the old one's clock.
+ */
+const fades = new Map<number, { expiresAtMs: number; style: Record<string, string> }>();
+let fadeFlip = 0;
+const fadeOf = (row: FeedRowDisplay): Record<string, string> => {
+  const known = fades.get(row.seq);
+  if (known && known.expiresAtMs === row.expiresAtMs) return known.style;
+  fadeFlip ^= 1;
+  const style = {
+    animationName: `kill-feed-fade-${fadeFlip}`,
+    animationDelay: `${row.expiresAtMs - FEED_FADE_MS - props.feed.nowMs}ms`,
+  };
+  fades.set(row.seq, { expiresAtMs: row.expiresAtMs, style });
+  // Rows that are gone take their entry with them.
+  if (fades.size > 16) {
+    const live = new Set(props.feed.rows.map(r => r.seq));
+    for (const seq of fades.keys()) if (!live.has(seq)) fades.delete(seq);
+  }
+  return style;
+};
+
 /** The glyph an objective wears where a champion would have a face. */
 const OBJECTIVE_ICON: Record<ObjectiveKind, string> = {
   turret: 'fa-solid fa-chess-rook',
@@ -153,7 +182,7 @@ const initial = (name: string): string => name.trim().charAt(0).toUpperCase();
         :key="row.seq"
         class="kill-feed-row"
         :class="[row.accent && 'accent-' + row.accent, { mine: row.mine }]"
-        :style="{ '--row-fade': row.fade }"
+        :style="fadeOf(row)"
       >
         <template v-if="row.killer">
           <span class="kill-feed-face" :class="row.killer.side">
