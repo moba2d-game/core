@@ -68,8 +68,7 @@ const GRANDFATHERED_FOG_READS = new Set(['AttackableUnit.ts']);
  * and it is a draw, not an acquisition.
  */
 const PINNED = new Set([
-  'AttackableUnit.ts:x1:if (!this.isDead && this.game.worldMouse) {',
-  'AttackableUnit.ts:x1:let mouseDir = p5.Vector.sub(this.game.worldMouse, pos).setMag(size / 2 + 2);',
+  'AttackableUnit.ts:x1:const mouse = this.game.worldMouse;',
 ]);
 
 export const seamDebt = {
