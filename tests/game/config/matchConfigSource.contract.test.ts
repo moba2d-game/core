@@ -136,6 +136,7 @@ const fakeHost = (director: MatchDirector): MatchDirectorHost => {
   let zoom = 1;
   let quality: MatchDirectorHost['renderQuality'] = 'auto';
   let fps: MatchDirectorHost['renderFps'] = 60;
+  let scale: MatchDirectorHost['renderScale'] = 'auto';
   let shake = true;
   return {
     director,
@@ -166,6 +167,12 @@ const fakeHost = (director: MatchDirector): MatchDirectorHost => {
     },
     setRenderFps(next) {
       fps = next;
+    },
+    get renderScale() {
+      return scale;
+    },
+    setRenderScale(next) {
+      scale = next;
     },
     get screenShake() {
       return shake;
@@ -663,6 +670,13 @@ describe.each(SOURCES)('MatchConfigSource contract — %s', (name, make) => {
       source.setRenderFps(30);
       expect(source.renderQuality).toBe('low');
       expect(source.renderFps).toBe(30);
+    });
+
+    it('stores the canvas resolution scale', () => {
+      source.setRenderScale(75);
+      expect(source.renderScale).toBe(75);
+      source.setRenderScale('auto');
+      expect(source.renderScale).toBe('auto');
     });
 
     it('stores the screen-shake toggle', () => {

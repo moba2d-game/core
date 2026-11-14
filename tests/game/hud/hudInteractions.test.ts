@@ -85,6 +85,8 @@ describe('practice range controls', () => {
     expect(source).toContain('id="practice-render-fps"');
     expect(source).toContain('source.setRenderQuality');
     expect(source).toContain('source.setRenderFps');
+    expect(source).toContain('id="practice-render-scale"');
+    expect(source).toContain('source.setRenderScale');
   });
 
   it('waits for a default reset and disables its button while kits are loading', () => {
@@ -107,8 +109,10 @@ describe('createHudInteractions — the Tab scoreboard', () => {
       objectManager: { objects: [] },
       renderQuality: 'auto',
       renderFps: 60,
+      renderScale: 'auto',
       setRenderQuality: vi.fn(),
       setRenderFps: vi.fn(),
+      setRenderScale: vi.fn(),
       pause: vi.fn(),
       unpause: vi.fn(),
     }) as any;
@@ -149,8 +153,10 @@ describe('createHudInteractions — the ways into the practice panel', () => {
       objectManager: { objects: [] },
       renderQuality: 'auto',
       renderFps: 60,
+      renderScale: 'auto',
       setRenderQuality: vi.fn(),
       setRenderFps: vi.fn(),
+      setRenderScale: vi.fn(),
       pause: vi.fn(),
       unpause: vi.fn(),
     }) as any;
@@ -301,6 +307,10 @@ describe('createHudInteractions — the ways into the practice panel', () => {
 
     expect(game.setRenderQuality).toHaveBeenCalledWith('low');
     expect(game.setRenderFps).toHaveBeenCalledWith(30);
+
+    (hud as any).setRenderScale(75);
+    expect(game.setRenderScale).toHaveBeenCalledWith(75);
+    expect((hud as any).renderScale).toBe('auto');
   });
 
   it('always opens: a second press cannot toggle an open panel shut', () => {
@@ -347,8 +357,10 @@ describe('createHudInteractions — Hồi Thành', () => {
       objectManager: { objects: [] },
       renderQuality: 'auto',
       renderFps: 60,
+      renderScale: 'auto',
       setRenderQuality: vi.fn(),
       setRenderFps: vi.fn(),
+      setRenderScale: vi.fn(),
       pause: vi.fn(),
       unpause: vi.fn(),
       recall: vi.fn(),

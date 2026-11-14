@@ -42,7 +42,7 @@ import {
 } from '@/game/input/touchPreferences';
 import { ZOOM_FACTOR_MAX, ZOOM_FACTOR_MIN } from '@/game/config/zoomBounds';
 import type { RenderQuality } from '@/game/managers/ObjectManager';
-import type { RenderFps } from '@/game/config/renderPreferences';
+import type { RenderFps, RenderScale } from '@/game/config/renderPreferences';
 
 const panel = inject(CONFIG_PANEL)!;
 const source = panel.source;
@@ -99,6 +99,7 @@ const setTargetPriority = (priority: TouchTargetPriority): void => {
 
 const renderQuality = ref<RenderQuality>(source.renderQuality);
 const renderFps = ref<RenderFps>(source.renderFps);
+const renderScale = ref<RenderScale>(source.renderScale);
 
 const onRenderQualityChange = (event: Event): void => {
   source.setRenderQuality((event.target as HTMLSelectElement).value as RenderQuality);
@@ -108,6 +109,12 @@ const onRenderQualityChange = (event: Event): void => {
 const onRenderFpsChange = (event: Event): void => {
   source.setRenderFps(Number((event.target as HTMLSelectElement).value) as RenderFps);
   renderFps.value = source.renderFps;
+};
+
+const onRenderScaleChange = (event: Event): void => {
+  const value = (event.target as HTMLSelectElement).value;
+  source.setRenderScale(value === 'auto' ? 'auto' : (Number(value) as RenderScale));
+  renderScale.value = source.renderScale;
 };
 
 const screenShake = ref<boolean>(source.screenShake);
@@ -226,6 +233,7 @@ const controlsSummary = computed(() => {
 const targetSummary = computed(() => (targetPriority.value === 'nearest' ? 'Gần nhất' : 'Ít máu nhất'));
 const displaySummary = computed(() => {
   const parts = [QUALITY_LABELS[renderQuality.value] ?? renderQuality.value, `${renderFps.value} FPS`];
+  if (renderScale.value !== 'auto') parts.push(`${renderScale.value}%`);
   if (screenShake.value) parts.push('rung màn hình');
   if (live) parts.push(`zoom ${Math.round(zoom.value * 100)}%`);
   return parts.join(' · ');
@@ -327,6 +335,15 @@ const onDebugChange = (key: keyof DebugLayerConfig, event: Event): void => {
           <select id="practice-render-fps" :value="renderFps" @change="onRenderFpsChange">
             <option :value="30">30 FPS — tiết kiệm pin</option>
             <option :value="60">60 FPS — mượt hơn</option>
+          </select>
+        </label>
+        <label class="pregame-field">
+          <span>Độ phân giải</span>
+          <select id="practice-render-scale" :value="renderScale" @change="onRenderScaleChange">
+            <option value="auto">Tự động</option>
+            <option :value="100">100% — nét nhất</option>
+            <option :value="75">75% — mượt hơn</option>
+            <option :value="50">50% — mượt nhất, hơi nhoè</option>
           </select>
         </label>
       </div>

@@ -56,7 +56,7 @@ import type {
 } from '@/game/config/PregameConfig';
 import type { MatchModeId } from '@/game/config/matchModes';
 import type { TouchModePreference } from '@/game/input/touchPreferences';
-import type { RenderFps } from '@/game/Game';
+import type { RenderFps, RenderScale } from '@/game/Game';
 import type { RenderQuality } from '@/game/managers/ObjectManager';
 import type { ScoreLine, StatGroup } from '@/game/hud/practice/participantStats';
 import type { SpellDisplay } from '@/game/config/spellCatalog';
@@ -481,6 +481,9 @@ export interface MatchConfigSource {
   readonly renderFps: RenderFps;
   setRenderQuality(quality: RenderQuality): void;
   setRenderFps(fps: RenderFps): void;
+  /** Canvas resolution — `canvasDensity` in `renderPreferences.ts` is what it means. */
+  readonly renderScale: RenderScale;
+  setRenderScale(scale: RenderScale): void;
   /** Camera shake on the player's own heavy hits, kills and death — `Camera.shake`. */
   readonly screenShake: boolean;
   setScreenShake(enabled: boolean): void;

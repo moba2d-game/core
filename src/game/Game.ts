@@ -139,9 +139,13 @@ export {
   setRenderQualityPreference,
   renderFpsPreference,
   setRenderFpsPreference,
+  renderScalePreference,
+  setRenderScalePreference,
+  canvasDensity,
   screenShakePreference,
   setScreenShakePreference,
   type RenderFps,
+  type RenderScale,
 } from './config/renderPreferences';
 
 // A re-export does not bind the names locally; this file applies all six.
@@ -150,9 +154,13 @@ import {
   setRenderQualityPreference,
   renderFpsPreference,
   setRenderFpsPreference,
+  renderScalePreference,
+  setRenderScalePreference,
+  canvasDensity,
   screenShakePreference,
   setScreenShakePreference,
   type RenderFps,
+  type RenderScale,
 } from './config/renderPreferences';
 
 /** Truy Nã: the wanted champion's minimap dot, gold. */
@@ -252,6 +260,14 @@ export default class Game {
   matchSeed = randomMatchSeed();
 
   renderFps: RenderFps = renderFpsPreference();
+  renderScale: RenderScale = renderScalePreference();
+  /**
+   * The `pixelDensity` the canvas is at now. Starts at the 1 that
+   * `GameScene.enter` sets and `destroy()` puts back, so a match on the
+   * default scale never resizes anything. `applyCanvasDensity` is the only
+   * writer.
+   */
+  appliedCanvasDensity = 1;
   /**
    * Whether this machine is currently missing its own frame target, which is
    * what `auto` quality degrades on. Derived once a frame in `draw()` from the
@@ -1093,6 +1109,7 @@ export default class Game {
     );
     this.renderStressed = this.stressState.stressed;
     this.deeplyStressed = this.stressState.deeplyStressed;
+    this.applyCanvasDensity();
     background(MAP_BACKGROUND_GREY);
 
     // Substitute the interpolated camera around the *whole* body: the minimap
@@ -1183,6 +1200,12 @@ export default class Game {
     this.fogOfWar.destroy();
     this.minimap.destroy();
     this.inGameHUD.destroy();
+    // Last, and only if this match moved it: the next match's `Game` starts
+    // from `appliedCanvasDensity = 1` and has to be right about that.
+    if (this.appliedCanvasDensity !== 1 && typeof pixelDensity === 'function') {
+      pixelDensity(1);
+      this.appliedCanvasDensity = 1;
+    }
   }
 
   /**
@@ -1332,6 +1355,42 @@ export default class Game {
     this.renderFps = fps === 30 ? 30 : 60;
     frameRate(this.renderFps);
     setRenderFpsPreference(this.renderFps);
+  }
+
+  /**
+   * The canvas resolution — persisted here, applied by the next drawn frame.
+   *
+   * Not applied on the spot, on purpose: `pixelDensity` clears the canvas, and
+   * the one place this is called from is the settings panel, which holds the
+   * match paused. `draw()` returns early while paused, so resizing here would
+   * leave a blank canvas behind the panel until it closed.
+   */
+  setRenderScale(scale: RenderScale): void {
+    this.renderScale = scale === 100 || scale === 75 || scale === 50 ? scale : 'auto';
+    setRenderScalePreference(this.renderScale);
+  }
+
+  /**
+   * Bring the canvas to the density `renderScale` asks for at this frame's
+   * stress tier — **only when that differs from what is applied**. p5's
+   * `pixelDensity(n)` reallocates and clears the backing store every time it
+   * is called, same value or not, so calling it per frame would cost more than
+   * the pixels it saves.
+   *
+   * Called at the top of `draw()`, before `background()`: the clear it causes
+   * is painted over in the same frame. Nothing else needs telling — the fog
+   * overlay and both minimap buffers pin their own density, every draw is in
+   * CSS pixels under p5's `scale(density)`, and `resizeCanvas` writes the
+   * context's string/number state (line caps, joins) back.
+   */
+  applyCanvasDensity(): void {
+    const density = canvasDensity(
+      this.renderScale,
+      stressTier(this.renderQuality, this.renderStressed, this.deeplyStressed)
+    );
+    if (density === this.appliedCanvasDensity) return;
+    pixelDensity(density);
+    this.appliedCanvasDensity = density;
   }
 
   /** The camera-shake toggle — applied to the live camera and persisted. */

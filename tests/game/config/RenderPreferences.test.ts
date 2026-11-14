@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as GameModule from '../../../src/game/Game';
+import type { RenderScale } from '../../../src/game/config/renderPreferences';
 
 class MemoryStorage {
   private values = new Map<string, string>();
@@ -55,6 +56,86 @@ describe('render preferences', () => {
     expect(game.fps).toBe(60);
     expect(game.renderFps).toBe(30);
     expect(applyFrameRate).toHaveBeenCalledWith(30);
+  });
+});
+
+describe('render scale', () => {
+  let storage: MemoryStorage;
+
+  beforeEach(() => {
+    storage = new MemoryStorage();
+    vi.stubGlobal('window', { localStorage: storage });
+  });
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('round-trips every supported scale through storage, re-exported from Game', () => {
+    for (const scale of [100, 75, 50, 'auto'] as const) {
+      (GameModule as any).setRenderScalePreference(scale);
+      expect(storage.getItem('moba2d.renderScale')).toBe(String(scale));
+      expect((GameModule as any).renderScalePreference()).toBe(scale);
+    }
+  });
+
+  it('reads a missing or invalid stored scale as auto', () => {
+    expect((GameModule as any).renderScalePreference()).toBe('auto');
+    storage.setItem('moba2d.renderScale', '33');
+    expect((GameModule as any).renderScalePreference()).toBe('auto');
+    (GameModule as any).setRenderScalePreference(33);
+    expect(storage.getItem('moba2d.renderScale')).toBe('auto');
+  });
+
+  it('maps a scale and a stress tier to a canvas density', async () => {
+    const { canvasDensity } = await import('../../../src/game/config/renderPreferences');
+    const table: Array<[RenderScale, 0 | 1 | 2, number]> = [
+      ['auto', 0, 1],
+      ['auto', 1, 1],
+      ['auto', 2, 0.75],
+      [100, 0, 1],
+      [100, 2, 1],
+      [75, 0, 0.75],
+      [75, 2, 0.75],
+      [50, 0, 0.5],
+      [50, 2, 0.5],
+    ];
+    for (const [scale, tier, density] of table) {
+      expect(canvasDensity(scale, tier), `${scale} @ tier ${tier}`).toBe(density);
+    }
+  });
+
+  it('resizes the canvas only when the density changes, never per frame', () => {
+    const applyDensity = vi.fn();
+    vi.stubGlobal('pixelDensity', applyDensity);
+    const game = {
+      renderScale: 'auto',
+      renderQuality: 'low',
+      renderStressed: false,
+      deeplyStressed: false,
+      appliedCanvasDensity: 1,
+    };
+    const apply = (GameModule.default.prototype as any).applyCanvasDensity;
+
+    apply.call(game);
+    apply.call(game);
+    expect(applyDensity.mock.calls).toEqual([[0.75]]);
+
+    // Leaving the deep tier is a change, and so is put back exactly once.
+    game.renderQuality = 'high';
+    apply.call(game);
+    apply.call(game);
+    expect(applyDensity.mock.calls).toEqual([[0.75], [1]]);
+  });
+
+  it('stores the chosen scale on the game and persists it', () => {
+    vi.stubGlobal('pixelDensity', vi.fn());
+    const game = { renderScale: 'auto' };
+
+    (GameModule.default.prototype as any).setRenderScale.call(game, 50);
+    expect(game.renderScale).toBe(50);
+    expect(storage.getItem('moba2d.renderScale')).toBe('50');
+
+    (GameModule.default.prototype as any).setRenderScale.call(game, 33);
+    expect(game.renderScale).toBe('auto');
   });
 });
 

@@ -77,8 +77,10 @@ const fakeHost = (host: MatchDirector): MatchDirectorHost => {
     activeMapId: DEFAULT_MAP_ID,
     renderQuality: 'auto',
     renderFps: 60,
+    renderScale: 'auto',
     setRenderQuality() {},
     setRenderFps() {},
+    setRenderScale() {},
     setTouchUiEnabled() {},
     requestExit() {
       exits++;

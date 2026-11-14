@@ -46,7 +46,7 @@ import {
   touchModePreference,
   type TouchModePreference,
 } from '@/game/input/touchPreferences';
-import type { RenderFps } from '@/game/config/renderPreferences';
+import type { RenderFps, RenderScale } from '@/game/config/renderPreferences';
 import type { RenderQuality } from '@/game/managers/ObjectManager';
 import {
   scoreLine,
@@ -87,6 +87,8 @@ export interface MatchDirectorHost {
   readonly renderFps: RenderFps;
   setRenderQuality(quality: RenderQuality): void;
   setRenderFps(fps: RenderFps): void;
+  readonly renderScale: RenderScale;
+  setRenderScale(scale: RenderScale): void;
   readonly screenShake: boolean;
   setScreenShake(enabled: boolean): void;
   /** Applies a touch/pointer switch to the live match — `Game.setTouchControlsEnabled`. */
@@ -672,6 +674,14 @@ export default class MatchDirectorSource implements MatchConfigSource {
 
   setRenderFps(fps: RenderFps): void {
     this.host.setRenderFps(fps);
+  }
+
+  get renderScale(): RenderScale {
+    return this.host.renderScale;
+  }
+
+  setRenderScale(scale: RenderScale): void {
+    this.host.setRenderScale(scale);
   }
 
   get screenShake(): boolean {

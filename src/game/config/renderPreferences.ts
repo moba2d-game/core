@@ -11,16 +11,23 @@
  * costs nothing to pull in.
  *
  * No p5 globals, no game objects: safe to import from the menu. `Game.ts`
- * re-exports all four so every existing `from '@/game/Game'` still resolves,
+ * re-exports them all so every existing `from '@/game/Game'` still resolves,
  * and remains the only thing that *applies* them (`frameRate`, the quality
  * branch in `ObjectManager`).
  */
 import type { RenderQuality } from '@/game/managers/ObjectManager';
 
 export type RenderFps = 30 | 60;
+/**
+ * How many canvas pixels back each CSS pixel, as a percentage — or `'auto'`,
+ * which gives up a quarter of them only while the machine is deep in trouble
+ * (see `canvasDensity`).
+ */
+export type RenderScale = 'auto' | 100 | 75 | 50;
 
 const RENDER_QUALITY_STORAGE_KEY = 'moba2d.renderQuality';
 const RENDER_FPS_STORAGE_KEY = 'moba2d.renderFps';
+const RENDER_SCALE_STORAGE_KEY = 'moba2d.renderScale';
 const SCREEN_SHAKE_STORAGE_KEY = 'moba2d.screenShake';
 
 export function renderQualityPreference(): RenderQuality {
@@ -59,6 +66,46 @@ export function setRenderFpsPreference(fps: RenderFps): void {
   } catch {
     /* storage blocked: the live setting still works */
   }
+}
+
+export function renderScalePreference(): RenderScale {
+  try {
+    const stored = window.localStorage.getItem(RENDER_SCALE_STORAGE_KEY);
+    if (stored === '100') return 100;
+    if (stored === '75') return 75;
+    if (stored === '50') return 50;
+  } catch {
+    /* storage blocked: use the automatic scale */
+  }
+  return 'auto';
+}
+
+export function setRenderScalePreference(scale: RenderScale): void {
+  try {
+    window.localStorage.setItem(
+      RENDER_SCALE_STORAGE_KEY,
+      scale === 100 || scale === 75 || scale === 50 ? String(scale) : 'auto'
+    );
+  } catch {
+    /* storage blocked: the live setting still works */
+  }
+}
+
+/**
+ * The p5 `pixelDensity` a scale asks for, given `stressTier(...)`.
+ *
+ * Fill is what a weak phone pays for, so fewer canvas pixels is the one lever
+ * that cuts every draw at once: a 10-champion fight on an Oppo CPH1912
+ * measured 15.9 fps at density 1, 18.3 at 0.75 and 21.4 at 0.5 (interleaved,
+ * medians). `'auto'` takes only the first step, and only on the deep tier —
+ * a machine that keeps up stays sharp. Pure, so the menu can import it;
+ * `Game.applyCanvasDensity` is the only thing that applies the answer.
+ */
+export function canvasDensity(scale: RenderScale, tier: 0 | 1 | 2): number {
+  if (scale === 100) return 1;
+  if (scale === 75) return 0.75;
+  if (scale === 50) return 0.5;
+  return tier === 2 ? 0.75 : 1;
 }
 
 /**

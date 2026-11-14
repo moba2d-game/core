@@ -40,11 +40,14 @@ import type { MatchTeamId } from '@/game/config/MatchTeams';
 import {
   renderFpsPreference,
   renderQualityPreference,
+  renderScalePreference,
   screenShakePreference,
   setRenderFpsPreference,
   setRenderQualityPreference,
+  setRenderScalePreference,
   setScreenShakePreference,
   type RenderFps,
+  type RenderScale,
 } from '@/game/config/renderPreferences';
 import {
   setTouchModePreference,
@@ -432,6 +435,14 @@ export default class PregameConfigSource implements MatchConfigSource {
 
   setRenderFps(fps: RenderFps): void {
     setRenderFpsPreference(fps);
+  }
+
+  get renderScale(): RenderScale {
+    return renderScalePreference();
+  }
+
+  setRenderScale(scale: RenderScale): void {
+    setRenderScalePreference(scale);
   }
 
   get screenShake(): boolean {
